@@ -20,7 +20,7 @@ use std::task::{Context, Poll};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tower::ServiceExt;
 
-use crate::{NavigatorService, ServerState, health_router};
+use crate::{NavigatorService, ServerState, http_router};
 
 /// Multiplexed gRPC/HTTP service.
 #[derive(Clone)]
@@ -42,12 +42,12 @@ impl MultiplexService {
         S: AsyncRead + AsyncWrite + Unpin + Send + 'static,
     {
         let grpc_service = NavigatorServer::new(NavigatorService::new(self.state.clone()));
-        let http_service = health_router();
+        let http_service = http_router(self.state.clone());
 
         let service = MultiplexedService::new(grpc_service, http_service);
 
         Builder::new(TokioExecutor::new())
-            .serve_connection(TokioIo::new(stream), service)
+            .serve_connection_with_upgrades(TokioIo::new(stream), service)
             .await?;
 
         Ok(())

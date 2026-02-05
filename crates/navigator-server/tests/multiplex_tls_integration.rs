@@ -8,9 +8,10 @@ use hyper_util::{
     server::conn::auto::Builder,
 };
 use navigator_core::proto::{
-    CreateSandboxRequest, DeleteSandboxRequest, DeleteSandboxResponse, GetSandboxPolicyRequest,
-    GetSandboxPolicyResponse, GetSandboxRequest, HealthRequest, HealthResponse,
-    ListSandboxesRequest, ListSandboxesResponse, SandboxResponse, SandboxStreamEvent,
+    CreateSandboxRequest, CreateSshSessionRequest, CreateSshSessionResponse, DeleteSandboxRequest,
+    DeleteSandboxResponse, GetSandboxPolicyRequest, GetSandboxPolicyResponse, GetSandboxRequest,
+    HealthRequest, HealthResponse, ListSandboxesRequest, ListSandboxesResponse,
+    RevokeSshSessionRequest, RevokeSshSessionResponse, SandboxResponse, SandboxStreamEvent,
     ServiceStatus, WatchSandboxRequest,
     navigator_client::NavigatorClient,
     navigator_server::{Navigator, NavigatorServer},
@@ -86,6 +87,24 @@ impl Navigator for TestNavigator {
     ) -> Result<Response<GetSandboxPolicyResponse>, Status> {
         Err(Status::unimplemented(
             "get_sandbox_policy not implemented in test",
+        ))
+    }
+
+    async fn create_ssh_session(
+        &self,
+        _request: tonic::Request<CreateSshSessionRequest>,
+    ) -> Result<Response<CreateSshSessionResponse>, Status> {
+        Err(Status::unimplemented(
+            "create_ssh_session not implemented in test",
+        ))
+    }
+
+    async fn revoke_ssh_session(
+        &self,
+        _request: tonic::Request<RevokeSshSessionRequest>,
+    ) -> Result<Response<RevokeSshSessionResponse>, Status> {
+        Err(Status::unimplemented(
+            "revoke_ssh_session not implemented in test",
         ))
     }
 

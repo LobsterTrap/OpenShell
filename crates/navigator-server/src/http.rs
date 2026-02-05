@@ -2,6 +2,7 @@
 
 use axum::{Json, Router, http::StatusCode, response::IntoResponse, routing::get};
 use serde::Serialize;
+use std::sync::Arc;
 
 /// Health check response.
 #[derive(Debug, Serialize)]
@@ -39,4 +40,9 @@ pub fn health_router() -> Router {
         .route("/health", get(health))
         .route("/healthz", get(healthz))
         .route("/readyz", get(readyz))
+}
+
+/// Create the HTTP router.
+pub fn http_router(state: Arc<crate::ServerState>) -> Router {
+    health_router().merge(crate::ssh_tunnel::router(state))
 }

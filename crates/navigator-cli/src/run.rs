@@ -16,12 +16,13 @@ use navigator_core::proto::{
     SandboxSpec, WatchSandboxRequest, navigator_client::NavigatorClient,
 };
 use owo_colors::OwoColorize;
-use serde::Serialize;
-use std::io::IsTerminal;
+use serde::{Deserialize, Serialize};
+use std::io::{IsTerminal, Write};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use serde::Deserialize;
+// Re-export SSH functions for backward compatibility
+pub use crate::ssh::{sandbox_connect, sandbox_ssh_proxy};
 
 /// Convert a sandbox phase integer to a human-readable string.
 fn phase_name(phase: i32) -> &'static str {
@@ -73,6 +74,11 @@ impl LogDisplay {
         self.latest_log.clear();
         self.spinner
             .finish_with_message(format_phase_label(&self.phase));
+    }
+
+    fn shutdown(&self) {
+        self.spinner.disable_steady_tick();
+        self.spinner.finish_and_clear();
     }
 
     fn set_log(&mut self, line: String) {
@@ -264,6 +270,7 @@ pub async fn sandbox_create(server: &str) -> Result<()> {
         .ok_or_else(|| miette::miette!("sandbox missing from response"))?;
 
     let interactive = std::io::stdout().is_terminal();
+    let sandbox_id = sandbox.id.clone();
 
     // Set up display
     let mut display = if interactive {
@@ -372,11 +379,19 @@ pub async fn sandbox_create(server: &str) -> Result<()> {
     // Finish up - check final phase
     if let Some(d) = display.as_mut() {
         d.finish_phase(phase_name(last_phase));
+        d.shutdown();
     }
+    drop(display);
+    let _ = std::io::stdout().flush();
+    let _ = std::io::stderr().flush();
     println!();
 
     match SandboxPhase::try_from(last_phase) {
-        Ok(SandboxPhase::Ready) => Ok(()),
+        Ok(SandboxPhase::Ready) => {
+            drop(stream);
+            drop(client);
+            sandbox_connect(server, &sandbox_id).await
+        }
         Ok(SandboxPhase::Error) => {
             if last_error_reason.is_empty() {
                 Err(miette::miette!(
@@ -790,13 +805,5 @@ pub async fn sandbox_delete(server: &str, ids: &[String]) -> Result<()> {
         }
     }
 
-    Ok(())
-}
-
-/// Connect to a sandbox.
-#[allow(clippy::unused_async)] // Will be implemented with async operations
-pub async fn sandbox_connect(_server: &str, id: &str) -> Result<()> {
-    println!("Sandbox connect is not implemented yet.");
-    println!("Requested sandbox id: {id}");
     Ok(())
 }

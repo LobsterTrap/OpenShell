@@ -34,6 +34,30 @@ pub struct Config {
     /// Used by sandbox pods to fetch their policy at startup.
     #[serde(default)]
     pub grpc_endpoint: String,
+
+    /// Public gateway host for SSH proxy connections.
+    #[serde(default = "default_ssh_gateway_host")]
+    pub ssh_gateway_host: String,
+
+    /// Public gateway port for SSH proxy connections.
+    #[serde(default = "default_ssh_gateway_port")]
+    pub ssh_gateway_port: u16,
+
+    /// Path for SSH CONNECT/upgrade requests.
+    #[serde(default = "default_ssh_connect_path")]
+    pub ssh_connect_path: String,
+
+    /// SSH listen port inside sandbox pods.
+    #[serde(default = "default_sandbox_ssh_port")]
+    pub sandbox_ssh_port: u16,
+
+    /// Shared secret for gateway-to-sandbox SSH handshake.
+    #[serde(default)]
+    pub ssh_handshake_secret: String,
+
+    /// Allowed clock skew for SSH handshake validation, in seconds.
+    #[serde(default = "default_ssh_handshake_skew_secs")]
+    pub ssh_handshake_skew_secs: u64,
 }
 
 /// TLS configuration.
@@ -56,6 +80,12 @@ impl Default for Config {
             sandbox_namespace: default_sandbox_namespace(),
             sandbox_image: String::new(),
             grpc_endpoint: String::new(),
+            ssh_gateway_host: default_ssh_gateway_host(),
+            ssh_gateway_port: default_ssh_gateway_port(),
+            ssh_connect_path: default_ssh_connect_path(),
+            sandbox_ssh_port: default_sandbox_ssh_port(),
+            ssh_handshake_secret: String::new(),
+            ssh_handshake_skew_secs: default_ssh_handshake_skew_secs(),
         }
     }
 }
@@ -70,6 +100,26 @@ fn default_log_level() -> String {
 
 fn default_sandbox_namespace() -> String {
     "default".to_string()
+}
+
+fn default_ssh_gateway_host() -> String {
+    "127.0.0.1".to_string()
+}
+
+const fn default_ssh_gateway_port() -> u16 {
+    8080
+}
+
+fn default_ssh_connect_path() -> String {
+    "/connect/ssh".to_string()
+}
+
+const fn default_sandbox_ssh_port() -> u16 {
+    2222
+}
+
+const fn default_ssh_handshake_skew_secs() -> u64 {
+    300
 }
 
 impl Config {
@@ -122,6 +172,48 @@ impl Config {
     #[must_use]
     pub fn with_grpc_endpoint(mut self, endpoint: impl Into<String>) -> Self {
         self.grpc_endpoint = endpoint.into();
+        self
+    }
+
+    /// Create a new configuration with the SSH gateway host.
+    #[must_use]
+    pub fn with_ssh_gateway_host(mut self, host: impl Into<String>) -> Self {
+        self.ssh_gateway_host = host.into();
+        self
+    }
+
+    /// Create a new configuration with the SSH gateway port.
+    #[must_use]
+    pub const fn with_ssh_gateway_port(mut self, port: u16) -> Self {
+        self.ssh_gateway_port = port;
+        self
+    }
+
+    /// Create a new configuration with the SSH connect path.
+    #[must_use]
+    pub fn with_ssh_connect_path(mut self, path: impl Into<String>) -> Self {
+        self.ssh_connect_path = path.into();
+        self
+    }
+
+    /// Create a new configuration with the sandbox SSH port.
+    #[must_use]
+    pub const fn with_sandbox_ssh_port(mut self, port: u16) -> Self {
+        self.sandbox_ssh_port = port;
+        self
+    }
+
+    /// Create a new configuration with the SSH handshake secret.
+    #[must_use]
+    pub fn with_ssh_handshake_secret(mut self, secret: impl Into<String>) -> Self {
+        self.ssh_handshake_secret = secret.into();
+        self
+    }
+
+    /// Create a new configuration with SSH handshake skew allowance.
+    #[must_use]
+    pub const fn with_ssh_handshake_skew_secs(mut self, secs: u64) -> Self {
+        self.ssh_handshake_skew_secs = secs;
         self
     }
 }

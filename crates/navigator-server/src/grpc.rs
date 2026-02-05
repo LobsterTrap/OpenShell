@@ -5,10 +5,11 @@
 use crate::persistence::ObjectType;
 use futures::future;
 use navigator_core::proto::{
-    CreateSandboxRequest, DeleteSandboxRequest, DeleteSandboxResponse, GetSandboxPolicyRequest,
-    GetSandboxPolicyResponse, GetSandboxRequest, HealthRequest, HealthResponse,
-    ListSandboxesRequest, ListSandboxesResponse, SandboxResponse, SandboxStreamEvent,
-    ServiceStatus, WatchSandboxRequest, navigator_server::Navigator,
+    CreateSandboxRequest, CreateSshSessionRequest, CreateSshSessionResponse, DeleteSandboxRequest,
+    DeleteSandboxResponse, GetSandboxPolicyRequest, GetSandboxPolicyResponse, GetSandboxRequest,
+    HealthRequest, HealthResponse, ListSandboxesRequest, ListSandboxesResponse,
+    RevokeSshSessionRequest, RevokeSshSessionResponse, SandboxResponse, SandboxStreamEvent,
+    ServiceStatus, SshSession, WatchSandboxRequest, navigator_server::Navigator,
 };
 use navigator_core::proto::{Sandbox, SandboxPhase};
 use prost::Message;
@@ -431,4 +432,108 @@ impl Navigator for NavigatorService {
             policy: Some(policy),
         }))
     }
+
+    async fn create_ssh_session(
+        &self,
+        request: Request<CreateSshSessionRequest>,
+    ) -> Result<Response<CreateSshSessionResponse>, Status> {
+        let req = request.into_inner();
+        if req.sandbox_id.is_empty() {
+            return Err(Status::invalid_argument("sandbox_id is required"));
+        }
+
+        let sandbox = self
+            .state
+            .store
+            .get_message::<Sandbox>(&req.sandbox_id)
+            .await
+            .map_err(|e| Status::internal(format!("fetch sandbox failed: {e}")))?
+            .ok_or_else(|| Status::not_found("sandbox not found"))?;
+
+        if SandboxPhase::try_from(sandbox.phase).ok() != Some(SandboxPhase::Ready) {
+            return Err(Status::failed_precondition("sandbox is not ready"));
+        }
+
+        let token = uuid::Uuid::new_v4().to_string();
+        let session = SshSession {
+            id: token.clone(),
+            sandbox_id: req.sandbox_id.clone(),
+            token: token.clone(),
+            created_at_ms: current_time_ms()
+                .map_err(|e| Status::internal(format!("timestamp generation failed: {e}")))?,
+            revoked: false,
+        };
+
+        self.state
+            .store
+            .put_message(&session)
+            .await
+            .map_err(|e| Status::internal(format!("persist ssh session failed: {e}")))?;
+
+        let (gateway_host, gateway_port) = resolve_gateway(&self.state.config);
+        let scheme = if self.state.config.tls.is_some() {
+            "https"
+        } else {
+            "http"
+        };
+
+        Ok(Response::new(CreateSshSessionResponse {
+            sandbox_id: req.sandbox_id,
+            token,
+            gateway_host,
+            gateway_port: gateway_port.into(),
+            gateway_scheme: scheme.to_string(),
+            connect_path: self.state.config.ssh_connect_path.clone(),
+            host_key_fingerprint: String::new(),
+        }))
+    }
+
+    async fn revoke_ssh_session(
+        &self,
+        request: Request<RevokeSshSessionRequest>,
+    ) -> Result<Response<RevokeSshSessionResponse>, Status> {
+        let token = request.into_inner().token;
+        if token.is_empty() {
+            return Err(Status::invalid_argument("token is required"));
+        }
+
+        let session = self
+            .state
+            .store
+            .get_message::<SshSession>(&token)
+            .await
+            .map_err(|e| Status::internal(format!("fetch ssh session failed: {e}")))?;
+
+        let Some(mut session) = session else {
+            return Ok(Response::new(RevokeSshSessionResponse { revoked: false }));
+        };
+
+        session.revoked = true;
+        self.state
+            .store
+            .put_message(&session)
+            .await
+            .map_err(|e| Status::internal(format!("persist ssh session failed: {e}")))?;
+
+        Ok(Response::new(RevokeSshSessionResponse { revoked: true }))
+    }
+}
+
+fn current_time_ms() -> Result<i64, std::time::SystemTimeError> {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?;
+    Ok(i64::try_from(now.as_millis()).unwrap_or(i64::MAX))
+}
+
+fn resolve_gateway(config: &navigator_core::Config) -> (String, u16) {
+    let host = if config.ssh_gateway_host.is_empty() {
+        config.bind_address.ip().to_string()
+    } else {
+        config.ssh_gateway_host.clone()
+    };
+    let port = if config.ssh_gateway_port == 0 {
+        config.bind_address.port()
+    } else {
+        config.ssh_gateway_port
+    };
+    (host, port)
 }

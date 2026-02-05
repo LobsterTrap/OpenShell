@@ -275,7 +275,7 @@ impl ProcessHandle {
 }
 
 #[cfg(unix)]
-fn drop_privileges(policy: &SandboxPolicy) -> Result<()> {
+pub fn drop_privileges(policy: &SandboxPolicy) -> Result<()> {
     let user_name = match policy.process.run_as_user.as_deref() {
         Some(name) if !name.is_empty() => Some(name),
         _ => None,

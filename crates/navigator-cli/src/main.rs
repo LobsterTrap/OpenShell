@@ -42,6 +42,21 @@ enum Commands {
         #[command(subcommand)]
         command: SandboxCommands,
     },
+
+    /// SSH proxy (used by `ProxyCommand`).
+    SshProxy {
+        /// Gateway URL (e.g., https://gw.example.com:443/proxy/connect).
+        #[arg(long)]
+        gateway: String,
+
+        /// Sandbox id.
+        #[arg(long)]
+        sandbox_id: String,
+
+        /// SSH session token.
+        #[arg(long)]
+        token: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -185,6 +200,13 @@ async fn main() -> Result<()> {
                 run::sandbox_connect(&cli.cluster, &id).await?;
             }
         },
+        Some(Commands::SshProxy {
+            gateway,
+            sandbox_id,
+            token,
+        }) => {
+            run::sandbox_ssh_proxy(&gateway, &sandbox_id, &token).await?;
+        }
         None => {
             Cli::command().print_help().expect("Failed to print help");
         }

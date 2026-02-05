@@ -49,6 +49,20 @@ mise run sandbox
 mise run cluster
 ```
 
+## Sandbox SSH access
+
+To connect to a running sandbox with SSH, use:
+
+```bash
+navigator sandbox connect <sandbox-id>
+```
+
+Relevant environment variables:
+
+- `NAVIGATOR_SSH_GATEWAY_HOST`, `NAVIGATOR_SSH_GATEWAY_PORT`, `NAVIGATOR_SSH_CONNECT_PATH`
+- `NAVIGATOR_SANDBOX_SSH_PORT`, `NAVIGATOR_SSH_HANDSHAKE_SECRET`, `NAVIGATOR_SSH_HANDSHAKE_SKEW_SECS`
+- `NAVIGATOR_SSH_LISTEN_ADDR` (set inside sandbox pods)
+
 ## Project Structure
 
 ```

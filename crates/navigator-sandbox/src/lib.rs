@@ -7,6 +7,7 @@ mod policy;
 mod process;
 mod proxy;
 mod sandbox;
+mod ssh;
 
 use miette::{IntoDiagnostic, Result};
 use std::net::SocketAddr;
@@ -35,6 +36,9 @@ pub async fn run_sandbox(
     policy_path: Option<String>,
     sandbox_id: Option<String>,
     navigator_endpoint: Option<String>,
+    ssh_listen_addr: Option<String>,
+    ssh_handshake_secret: Option<String>,
+    ssh_handshake_skew_secs: u64,
     _health_check: bool,
     _health_port: u16,
 ) -> Result<i32> {
@@ -47,6 +51,26 @@ pub async fn run_sandbox(
 
     // Prepare filesystem: create and chown read_write directories
     prepare_filesystem(&policy)?;
+
+    if let Some(listen_addr) = ssh_listen_addr {
+        let addr: SocketAddr = listen_addr.parse().into_diagnostic()?;
+        let policy_clone = policy.clone();
+        let workdir_clone = workdir.clone();
+        let secret = ssh_handshake_secret.unwrap_or_default();
+        tokio::spawn(async move {
+            if let Err(err) = ssh::run_ssh_server(
+                addr,
+                policy_clone,
+                workdir_clone,
+                secret,
+                ssh_handshake_skew_secs,
+            )
+            .await
+            {
+                tracing::error!(error = %err, "SSH server failed");
+            }
+        });
+    }
 
     // Create network namespace for proxy mode (Linux only)
     // This must be created before the proxy so the proxy can bind to the veth IP

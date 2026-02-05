@@ -13,6 +13,7 @@ mod persistence;
 mod sandbox;
 mod sandbox_index;
 mod sandbox_watch;
+mod ssh_tunnel;
 mod tls;
 pub mod tracing_bus;
 
@@ -22,7 +23,7 @@ use tokio::net::TcpListener;
 use tracing::{error, info};
 
 pub use grpc::NavigatorService;
-pub use http::health_router;
+pub use http::{health_router, http_router};
 pub use multiplex::{MultiplexService, MultiplexedService};
 use persistence::Store;
 use sandbox::{SandboxClient, spawn_sandbox_watcher};
@@ -93,6 +94,9 @@ pub async fn run_server(config: Config, tracing_log_bus: TracingLogBus) -> Resul
         config.sandbox_namespace.clone(),
         config.sandbox_image.clone(),
         config.grpc_endpoint.clone(),
+        format!("0.0.0.0:{}", config.sandbox_ssh_port),
+        config.ssh_handshake_secret.clone(),
+        config.ssh_handshake_skew_secs,
     )
     .await
     .map_err(|e| Error::execution(format!("failed to create kubernetes client: {e}")))?;

@@ -50,6 +50,18 @@ struct Args {
     #[arg(long, default_value = "warn", env = "NAVIGATOR_LOG_LEVEL")]
     log_level: String,
 
+    /// SSH listen address for sandbox access.
+    #[arg(long, env = "NAVIGATOR_SSH_LISTEN_ADDR")]
+    ssh_listen_addr: Option<String>,
+
+    /// Shared secret for gateway-to-sandbox SSH handshake.
+    #[arg(long, env = "NAVIGATOR_SSH_HANDSHAKE_SECRET")]
+    ssh_handshake_secret: Option<String>,
+
+    /// Allowed clock skew for SSH handshake validation.
+    #[arg(long, env = "NAVIGATOR_SSH_HANDSHAKE_SKEW_SECS", default_value = "300")]
+    ssh_handshake_skew_secs: u64,
+
     /// Enable health check endpoint.
     #[arg(long)]
     health_check: bool,
@@ -108,6 +120,9 @@ async fn main() -> Result<()> {
         args.policy,
         args.sandbox_id,
         args.navigator_endpoint,
+        args.ssh_listen_addr,
+        args.ssh_handshake_secret,
+        args.ssh_handshake_skew_secs,
         args.health_check,
         args.health_port,
     )

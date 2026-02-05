@@ -39,10 +39,6 @@ build_ci_image:
     DOCKER_BUILDKIT: "1"
   before_script: []  # Override default before_script (docker:24 doesn't have uv)
   rules:
-    - changes:
-        - deploy/docker/Dockerfile.ci
-        - mise.toml
-      when: always
     - when: manual
       allow_failure: true
   script:

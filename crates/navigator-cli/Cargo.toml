@@ -33,6 +33,9 @@ bytes = { workspace = true }
 http-body-util = { workspace = true }
 hyper = { workspace = true }
 hyper-util = { workspace = true }
+tokio-rustls = { workspace = true }
+rustls = { workspace = true }
+webpki-roots = "0.26"
 
 # Error handling
 miette = { workspace = true }
@@ -41,6 +44,9 @@ anyhow = { workspace = true }
 
 # Streams
 futures = { workspace = true }
+
+# URL parsing
+url = { workspace = true }
 
 # Logging
 tracing = { workspace = true }

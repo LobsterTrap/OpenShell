@@ -25,6 +25,12 @@ service Navigator {
   // Delete a sandbox by id.
   rpc DeleteSandbox(DeleteSandboxRequest) returns (DeleteSandboxResponse);
 
+  // Create a short-lived SSH session for a sandbox.
+  rpc CreateSshSession(CreateSshSessionRequest) returns (CreateSshSessionResponse);
+
+  // Revoke a previously issued SSH session.
+  rpc RevokeSshSession(RevokeSshSessionRequest) returns (RevokeSshSessionResponse);
+
   // Get sandbox policy by id (called by sandbox entrypoint at startup).
   rpc GetSandboxPolicy(navigator.sandbox.v1.GetSandboxPolicyRequest)
       returns (navigator.sandbox.v1.GetSandboxPolicyResponse);
@@ -84,6 +90,66 @@ message ListSandboxesResponse {
 // Delete sandbox response.
 message DeleteSandboxResponse {
   bool deleted = 1;
+}
+
+// Create SSH session request.
+message CreateSshSessionRequest {
+  // Sandbox id.
+  string sandbox_id = 1;
+}
+
+// Create SSH session response.
+message CreateSshSessionResponse {
+  // Sandbox id.
+  string sandbox_id = 1;
+
+  // Session token for the gateway tunnel.
+  string token = 2;
+
+  // Gateway host for SSH proxy connection.
+  string gateway_host = 3;
+
+  // Gateway port for SSH proxy connection.
+  uint32 gateway_port = 4;
+
+  // Gateway scheme (http or https).
+  string gateway_scheme = 5;
+
+  // HTTP path for the CONNECT/upgrade endpoint.
+  string connect_path = 6;
+
+  // Optional host key fingerprint.
+  string host_key_fingerprint = 7;
+}
+
+// Revoke SSH session request.
+message RevokeSshSessionRequest {
+  // Session token to revoke.
+  string token = 1;
+}
+
+// Revoke SSH session response.
+message RevokeSshSessionResponse {
+  // True when a session was revoked.
+  bool revoked = 1;
+}
+
+// SSH session record stored in persistence.
+message SshSession {
+  // Unique id (token).
+  string id = 1;
+
+  // Sandbox id.
+  string sandbox_id = 2;
+
+  // Session token.
+  string token = 3;
+
+  // Creation timestamp in milliseconds since epoch.
+  int64 created_at_ms = 4;
+
+  // Revoked flag.
+  bool revoked = 5;
 }
 
 // Watch sandbox request.

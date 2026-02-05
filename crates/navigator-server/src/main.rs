@@ -46,6 +46,34 @@ struct Args {
     /// This should be reachable from within the Kubernetes cluster.
     #[arg(long, env = "NAVIGATOR_GRPC_ENDPOINT")]
     grpc_endpoint: Option<String>,
+
+    /// Public host for the SSH gateway.
+    #[arg(long, env = "NAVIGATOR_SSH_GATEWAY_HOST", default_value = "127.0.0.1")]
+    ssh_gateway_host: String,
+
+    /// Public port for the SSH gateway.
+    #[arg(long, env = "NAVIGATOR_SSH_GATEWAY_PORT", default_value_t = 8080)]
+    ssh_gateway_port: u16,
+
+    /// HTTP path for SSH CONNECT/upgrade.
+    #[arg(
+        long,
+        env = "NAVIGATOR_SSH_CONNECT_PATH",
+        default_value = "/connect/ssh"
+    )]
+    ssh_connect_path: String,
+
+    /// SSH port inside sandbox pods.
+    #[arg(long, env = "NAVIGATOR_SANDBOX_SSH_PORT", default_value_t = 2222)]
+    sandbox_ssh_port: u16,
+
+    /// Shared secret for gateway-to-sandbox SSH handshake.
+    #[arg(long, env = "NAVIGATOR_SSH_HANDSHAKE_SECRET")]
+    ssh_handshake_secret: Option<String>,
+
+    /// Allowed clock skew in seconds for SSH handshake.
+    #[arg(long, env = "NAVIGATOR_SSH_HANDSHAKE_SKEW_SECS", default_value_t = 300)]
+    ssh_handshake_skew_secs: u64,
 }
 
 #[tokio::main]
@@ -75,7 +103,12 @@ async fn main() -> Result<()> {
 
     config = config
         .with_database_url(args.db_url)
-        .with_sandbox_namespace(args.sandbox_namespace);
+        .with_sandbox_namespace(args.sandbox_namespace)
+        .with_ssh_gateway_host(args.ssh_gateway_host)
+        .with_ssh_gateway_port(args.ssh_gateway_port)
+        .with_ssh_connect_path(args.ssh_connect_path)
+        .with_sandbox_ssh_port(args.sandbox_ssh_port)
+        .with_ssh_handshake_skew_secs(args.ssh_handshake_skew_secs);
 
     if let Some(image) = args.sandbox_image {
         config = config.with_sandbox_image(image);
@@ -83,6 +116,10 @@ async fn main() -> Result<()> {
 
     if let Some(endpoint) = args.grpc_endpoint {
         config = config.with_grpc_endpoint(endpoint);
+    }
+
+    if let Some(secret) = args.ssh_handshake_secret {
+        config = config.with_ssh_handshake_secret(secret);
     }
 
     info!(bind = %config.bind_address, "Starting Navigator server");

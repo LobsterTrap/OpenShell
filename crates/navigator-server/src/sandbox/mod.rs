@@ -2,6 +2,7 @@
 
 use crate::persistence::{ObjectId, ObjectType, Store};
 use futures::{StreamExt, TryStreamExt};
+use k8s_openapi::api::core::v1::Pod;
 use kube::api::{Api, ApiResource, DeleteParams, PostParams};
 use kube::core::gvk::GroupVersionKind;
 use kube::core::{DynamicObject, ObjectMeta};
@@ -11,6 +12,7 @@ use navigator_core::proto::{
     Sandbox, SandboxCondition, SandboxPhase, SandboxSpec, SandboxStatus, SandboxTemplate,
 };
 use std::collections::BTreeMap;
+use std::net::IpAddr;
 use std::sync::Arc;
 use tracing::{debug, info, warn};
 
@@ -27,6 +29,9 @@ pub struct SandboxClient {
     namespace: String,
     default_image: String,
     grpc_endpoint: String,
+    ssh_listen_addr: String,
+    ssh_handshake_secret: String,
+    ssh_handshake_skew_secs: u64,
 }
 
 impl std::fmt::Debug for SandboxClient {
@@ -44,6 +49,9 @@ impl SandboxClient {
         namespace: String,
         default_image: String,
         grpc_endpoint: String,
+        ssh_listen_addr: String,
+        ssh_handshake_secret: String,
+        ssh_handshake_skew_secs: u64,
     ) -> Result<Self, KubeError> {
         let client = Client::try_default().await?;
         Ok(Self {
@@ -51,6 +59,9 @@ impl SandboxClient {
             namespace,
             default_image,
             grpc_endpoint,
+            ssh_listen_addr,
+            ssh_handshake_secret,
+            ssh_handshake_skew_secs,
         })
     }
 
@@ -62,10 +73,37 @@ impl SandboxClient {
         &self.namespace
     }
 
+    pub fn ssh_listen_addr(&self) -> &str {
+        &self.ssh_listen_addr
+    }
+
+    pub fn ssh_handshake_secret(&self) -> &str {
+        &self.ssh_handshake_secret
+    }
+
+    pub const fn ssh_handshake_skew_secs(&self) -> u64 {
+        self.ssh_handshake_skew_secs
+    }
+
     pub fn api(&self) -> Api<DynamicObject> {
         let gvk = GroupVersionKind::gvk(SANDBOX_GROUP, SANDBOX_VERSION, SANDBOX_KIND);
         let resource = ApiResource::from_gvk(&gvk);
         Api::namespaced_with(self.client.clone(), &self.namespace, &resource)
+    }
+
+    pub async fn agent_pod_ip(&self, pod_name: &str) -> Result<Option<IpAddr>, KubeError> {
+        let api: Api<Pod> = Api::namespaced(self.client.clone(), &self.namespace);
+        match api.get(pod_name).await {
+            Ok(pod) => {
+                let ip = pod
+                    .status
+                    .and_then(|status| status.pod_ip)
+                    .and_then(|ip| ip.parse().ok());
+                Ok(ip)
+            }
+            Err(KubeError::Api(err)) if err.code == 404 => Ok(None),
+            Err(err) => Err(err),
+        }
     }
 
     pub async fn create(&self, sandbox: &Sandbox) -> Result<DynamicObject, KubeError> {
@@ -91,6 +129,9 @@ impl SandboxClient {
             &self.default_image,
             &sandbox.id,
             &self.grpc_endpoint,
+            self.ssh_listen_addr(),
+            self.ssh_handshake_secret(),
+            self.ssh_handshake_skew_secs(),
         );
         let api = self.api();
 
@@ -349,6 +390,9 @@ fn sandbox_to_k8s_spec(
     default_image: &str,
     sandbox_id: &str,
     grpc_endpoint: &str,
+    ssh_listen_addr: &str,
+    ssh_handshake_secret: &str,
+    ssh_handshake_skew_secs: u64,
 ) -> serde_json::Value {
     let mut root = serde_json::Map::new();
     if let Some(spec) = spec {
@@ -387,6 +431,9 @@ fn sandbox_to_k8s_spec(
                     default_image,
                     sandbox_id,
                     grpc_endpoint,
+                    ssh_listen_addr,
+                    ssh_handshake_secret,
+                    ssh_handshake_skew_secs,
                     &spec.environment,
                 ),
             );
@@ -413,6 +460,9 @@ fn sandbox_to_k8s_spec(
                 default_image,
                 sandbox_id,
                 grpc_endpoint,
+                ssh_listen_addr,
+                ssh_handshake_secret,
+                ssh_handshake_skew_secs,
                 spec_env,
             ),
         );
@@ -423,11 +473,15 @@ fn sandbox_to_k8s_spec(
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn sandbox_template_to_k8s(
     template: &SandboxTemplate,
     default_image: &str,
     sandbox_id: &str,
     grpc_endpoint: &str,
+    ssh_listen_addr: &str,
+    ssh_handshake_secret: &str,
+    ssh_handshake_skew_secs: u64,
     spec_environment: &std::collections::HashMap<String, String>,
 ) -> serde_json::Value {
     if let Some(pod_template) = struct_to_json(&template.pod_template) {
@@ -436,6 +490,9 @@ fn sandbox_template_to_k8s(
             template,
             sandbox_id,
             grpc_endpoint,
+            ssh_listen_addr,
+            ssh_handshake_secret,
+            ssh_handshake_skew_secs,
             spec_environment,
         );
     }
@@ -478,6 +535,9 @@ fn sandbox_template_to_k8s(
         spec_environment,
         sandbox_id,
         grpc_endpoint,
+        ssh_listen_addr,
+        ssh_handshake_secret,
+        ssh_handshake_skew_secs,
     );
 
     container.insert("env".to_string(), serde_json::Value::Array(env));
@@ -499,11 +559,15 @@ fn sandbox_template_to_k8s(
     serde_json::Value::Object(template_value)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn inject_pod_template_env(
     mut pod_template: serde_json::Value,
     template: &SandboxTemplate,
     sandbox_id: &str,
     grpc_endpoint: &str,
+    ssh_listen_addr: &str,
+    ssh_handshake_secret: &str,
+    ssh_handshake_skew_secs: u64,
     spec_environment: &std::collections::HashMap<String, String>,
 ) -> serde_json::Value {
     let Some(spec) = pod_template
@@ -536,6 +600,9 @@ fn inject_pod_template_env(
             template,
             sandbox_id,
             grpc_endpoint,
+            ssh_listen_addr,
+            ssh_handshake_secret,
+            ssh_handshake_skew_secs,
             spec_environment,
         );
     }
@@ -543,11 +610,15 @@ fn inject_pod_template_env(
     pod_template
 }
 
+#[allow(clippy::too_many_arguments)]
 fn update_container_env(
     container: &mut serde_json::Value,
     template: &SandboxTemplate,
     sandbox_id: &str,
     grpc_endpoint: &str,
+    ssh_listen_addr: &str,
+    ssh_handshake_secret: &str,
+    ssh_handshake_skew_secs: u64,
     spec_environment: &std::collections::HashMap<String, String>,
 ) {
     let Some(container_obj) = container.as_object_mut() else {
@@ -563,21 +634,35 @@ fn update_container_env(
         spec_environment,
         sandbox_id,
         grpc_endpoint,
+        ssh_listen_addr,
+        ssh_handshake_secret,
+        ssh_handshake_skew_secs,
     );
     container_obj.insert("env".to_string(), serde_json::Value::Array(env));
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_env_list(
     existing_env: Option<&Vec<serde_json::Value>>,
     template_environment: &std::collections::HashMap<String, String>,
     spec_environment: &std::collections::HashMap<String, String>,
     sandbox_id: &str,
     grpc_endpoint: &str,
+    ssh_listen_addr: &str,
+    ssh_handshake_secret: &str,
+    ssh_handshake_skew_secs: u64,
 ) -> Vec<serde_json::Value> {
     let mut env = existing_env.cloned().unwrap_or_default();
     apply_env_map(&mut env, template_environment);
     apply_env_map(&mut env, spec_environment);
-    apply_required_env(&mut env, sandbox_id, grpc_endpoint);
+    apply_required_env(
+        &mut env,
+        sandbox_id,
+        grpc_endpoint,
+        ssh_listen_addr,
+        ssh_handshake_secret,
+        ssh_handshake_skew_secs,
+    );
     env
 }
 
@@ -590,10 +675,28 @@ fn apply_env_map(
     }
 }
 
-fn apply_required_env(env: &mut Vec<serde_json::Value>, sandbox_id: &str, grpc_endpoint: &str) {
+fn apply_required_env(
+    env: &mut Vec<serde_json::Value>,
+    sandbox_id: &str,
+    grpc_endpoint: &str,
+    ssh_listen_addr: &str,
+    ssh_handshake_secret: &str,
+    ssh_handshake_skew_secs: u64,
+) {
     upsert_env(env, "NAVIGATOR_SANDBOX_ID", sandbox_id);
     upsert_env(env, "NAVIGATOR_ENDPOINT", grpc_endpoint);
     upsert_env(env, "NAVIGATOR_SANDBOX_COMMAND", "sleep infinity");
+    if !ssh_listen_addr.is_empty() {
+        upsert_env(env, "NAVIGATOR_SSH_LISTEN_ADDR", ssh_listen_addr);
+    }
+    if !ssh_handshake_secret.is_empty() {
+        upsert_env(env, "NAVIGATOR_SSH_HANDSHAKE_SECRET", ssh_handshake_secret);
+    }
+    upsert_env(
+        env,
+        "NAVIGATOR_SSH_HANDSHAKE_SKEW_SECS",
+        &ssh_handshake_skew_secs.to_string(),
+    );
 }
 
 fn upsert_env(env: &mut Vec<serde_json::Value>, name: &str, value: &str) {
