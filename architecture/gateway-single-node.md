@@ -68,6 +68,33 @@ The cluster entrypoint script (`deploy/docker/cluster-entrypoint.sh`) resolves t
 | GPU passthrough | CDI when enabled on daemon, else legacy `--gpus all` | Always CDI |
 | Socket paths | `/var/run/docker.sock`, `~/.colima/docker.sock`, `~/.orbstack/run/docker.sock` | `/run/user/<uid>/podman/podman.sock` (rootless), `/run/podman/podman.sock` (rootful) |
 
+## Rootless Container Runtime Support
+
+When the gateway container runs inside a rootless Podman environment (the default on Fedora, RHEL 9+, and other systemd-based distros), the k3s cluster faces restrictions from the user namespace. The entrypoint script (`deploy/docker/cluster-entrypoint.sh`) detects this and applies workarounds.
+
+### Detection
+
+The entrypoint reads `/proc/self/uid_map` to determine if it is running inside a user namespace. If UID 0 inside maps to a non-zero UID outside (inner=0, outer!=0), the container is rootless.
+
+### Adaptations
+
+| Issue | Cause | Mitigation |
+|---|---|---|
+| `/dev/kmsg` inaccessible | Kernel log device not granted in user namespace | `KubeletInUserNamespace=true` feature gate demotes the error to a warning |
+| `oom_score_adj` write denied | OOM score adjustment restricted in user namespace | `KubeletInUserNamespace=true` handles this |
+| IP forwarding disabled | Isolated network namespace defaults to `ip_forward=0` | Entrypoint sets `/proc/sys/net/ipv4/ip_forward` to `1` |
+| Cgroup hierarchy not writable | Host has not delegated cgroup controllers to the user slice | Entrypoint probes `/sys/fs/cgroup` writability and exits with actionable instructions |
+
+### Why Not `k3s --rootless`
+
+The k3s `--rootless` flag is designed for running k3s as a non-root user directly on a host. It uses RootlessKit to create a new user namespace. Inside an already-rootless container (where PID 1 is UID 0 mapped to a non-root host UID), `--rootless` fails because RootlessKit cannot create a nested user namespace mapping and has no subuid/subgid ranges for the container's root user.
+
+### Cgroup v2 Delegation Requirement
+
+Rootless Podman containers need the host to delegate cgroup v2 controllers so k3s can create its pod cgroup hierarchy (`kubepods/besteffort`, `kubepods/burstable`, `kubepods/guaranteed`). Without delegation, kubelet cannot manage container resource isolation.
+
+The pre-flight check in `docker.rs` (`check_rootless_cgroup_delegation`) reads `/sys/fs/cgroup/user.slice/user-{uid}.slice/cgroup.subtree_control` and warns if `cpuset`, `cpu`, `memory`, or `pids` are missing. The entrypoint has the authoritative check: it attempts `mkdir /sys/fs/cgroup/.k3s-probe` and exits with setup instructions if the directory is not writable.
+
 ## CLI Commands
 
 All gateway lifecycle commands live under `openshell gateway`:

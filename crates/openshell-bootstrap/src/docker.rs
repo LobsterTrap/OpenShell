@@ -168,11 +168,68 @@ pub async fn check_runtime_available(runtime: ContainerRuntime) -> Result<Docker
         Err(_) => None,
     };
 
+    // Warn early if rootless Podman is missing cgroup delegation.
+    // The authoritative check is in cluster-entrypoint.sh (inside the container),
+    // but catching it here avoids a slow image build/pull cycle before failure.
+    if runtime == ContainerRuntime::Podman {
+        check_rootless_cgroup_delegation();
+    }
+
     Ok(DockerPreflight {
         docker,
         version,
         runtime,
     })
+}
+
+/// Check if the current user's cgroup slice has the controllers k3s needs.
+///
+/// This is a best-effort pre-flight warning for rootless Podman. The
+/// authoritative check runs inside the container entrypoint; this catches
+/// the common case early so users don't wait for image builds to fail.
+fn check_rootless_cgroup_delegation() {
+    // Only relevant on cgroup v2 systems in a user namespace.
+    // Read real UID from /proc/self/status to avoid adding a libc/nix dependency.
+    let status = match std::fs::read_to_string("/proc/self/status") {
+        Ok(s) => s,
+        Err(_) => return,
+    };
+    let uid = status
+        .lines()
+        .find_map(|line| line.strip_prefix("Uid:\t").map(|v| v.split('\t').next()))
+        .and_then(|v| v?.parse::<u32>().ok());
+    let uid = match uid {
+        Some(uid) => uid,
+        None => return,
+    };
+    let subtree_path = format!("/sys/fs/cgroup/user.slice/user-{uid}.slice/cgroup.subtree_control");
+
+    let contents = match std::fs::read_to_string(&subtree_path) {
+        Ok(c) => c,
+        Err(_) => return, // Non-standard cgroup layout or not cgroup v2; skip.
+    };
+
+    let required = ["cpuset", "cpu", "memory", "pids"];
+    let missing: Vec<&str> = required
+        .iter()
+        .filter(|ctrl| !contents.split_whitespace().any(|c| c == **ctrl))
+        .copied()
+        .collect();
+
+    if !missing.is_empty() {
+        tracing::warn!(
+            missing = missing.join(", "),
+            "Rootless Podman detected but cgroup controllers are not fully delegated. \
+             The gateway will fail to start. Run the following (one-time setup):\n\n  \
+             sudo mkdir -p /etc/systemd/system/user@.service.d\n  \
+             sudo tee /etc/systemd/system/user@.service.d/delegate.conf <<'EOF'\n  \
+             [Service]\n  \
+             Delegate=cpu cpuset io memory pids\n  \
+             EOF\n  \
+             sudo systemctl daemon-reload\n\n  \
+             Then log out and back in."
+        );
+    }
 }
 
 /// Backward-compatible wrapper that auto-detects the runtime.
