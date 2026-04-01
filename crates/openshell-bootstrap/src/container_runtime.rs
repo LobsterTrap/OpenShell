@@ -99,9 +99,9 @@ pub fn detect_runtime(cli_override: Option<&str>) -> Result<ContainerRuntime> {
 
     // 2. Environment variable override
     if let Ok(value) = std::env::var(RUNTIME_ENV_VAR) {
-        let value = value.trim().to_string();
+        let value = value.trim();
         if !value.is_empty() {
-            return ContainerRuntime::from_str_loose(&value);
+            return ContainerRuntime::from_str_loose(value);
         }
     }
 
@@ -164,65 +164,19 @@ const PODMAN_ROOTFUL_SOCKET_PATHS: &[&str] =
 
 /// Check whether a Podman socket exists (rootless first, then rootful).
 fn has_podman_socket() -> bool {
-    // Rootless socket: /run/user/<uid>/podman/podman.sock
-    if let Some(path) = podman_rootless_socket_path() {
-        if Path::new(&path).exists() {
-            tracing::trace!(path, "found rootless Podman socket");
-            return true;
-        }
-    }
-
-    // Rootful sockets
-    for path in PODMAN_ROOTFUL_SOCKET_PATHS {
-        if Path::new(path).exists() {
-            tracing::trace!(path, "found rootful Podman socket");
-            return true;
-        }
-    }
-
-    false
+    !find_podman_sockets().is_empty()
 }
 
 /// Check whether a Docker socket exists (default path, then alternatives).
 fn has_docker_socket() -> bool {
-    // Check DOCKER_HOST first — if it points to a unix socket, check that
+    // DOCKER_HOST with a non-unix scheme (tcp://, ssh://) indicates Docker
+    // is the intended runtime even without a local socket file.
     if let Ok(docker_host) = std::env::var("DOCKER_HOST") {
-        if let Some(path) = docker_host.strip_prefix("unix://") {
-            if Path::new(path).exists() {
-                tracing::trace!(path, "found Docker socket via DOCKER_HOST");
-                return true;
-            }
-        }
-        // DOCKER_HOST is set but not a unix socket (e.g. tcp://) — assume
-        // Docker is the intended runtime
         if docker_host.starts_with("tcp://") || docker_host.starts_with("ssh://") {
             return true;
         }
     }
-
-    // Well-known paths
-    for path in DOCKER_SOCKET_PATHS {
-        if Path::new(path).exists() {
-            tracing::trace!(path, "found Docker socket");
-            return true;
-        }
-    }
-
-    // Home-relative alternative sockets (Colima, OrbStack)
-    if let Ok(home) = std::env::var("HOME") {
-        let alt_paths = [
-            format!("{home}/.colima/docker.sock"),
-            format!("{home}/.orbstack/run/docker.sock"),
-        ];
-        for path in &alt_paths {
-            if Path::new(path).exists() {
-                tracing::trace!(path, "found Docker socket at alternative path");
-                return true;
-            }
-        }
-    }
-
-    false
+    !find_docker_sockets().is_empty()
 }
 
 /// Return the path to the rootless Podman socket for the current user.
@@ -290,11 +244,21 @@ pub fn find_podman_sockets() -> Vec<String> {
 /// Return all Docker socket paths that exist on this system.
 ///
 /// Used by the bollard client connection logic to find the right socket.
+/// Also checks `DOCKER_HOST` for unix socket paths.
 pub fn find_docker_sockets() -> Vec<String> {
     let mut found = Vec::new();
 
+    // Check DOCKER_HOST for a unix socket path
+    if let Ok(docker_host) = std::env::var("DOCKER_HOST") {
+        if let Some(path) = docker_host.strip_prefix("unix://") {
+            if Path::new(path).exists() && !found.contains(&path.to_string()) {
+                found.push(path.to_string());
+            }
+        }
+    }
+
     for path in DOCKER_SOCKET_PATHS {
-        if Path::new(path).exists() {
+        if Path::new(path).exists() && !found.contains(&(*path).to_string()) {
             found.push((*path).to_string());
         }
     }

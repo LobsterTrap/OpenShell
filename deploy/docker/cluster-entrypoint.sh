@@ -552,6 +552,51 @@ if [ ! -f /sys/fs/cgroup/cgroup.controllers ]; then
 	EXTRA_KUBELET_ARGS="--kubelet-arg=fail-cgroupv1=false"
 fi
 
+# ---------------------------------------------------------------------------
+# Detect user namespace (rootless container runtime)
+# ---------------------------------------------------------------------------
+# Rootless Podman and similar runtimes run inside a user namespace where
+# /dev/kmsg, /proc/self/oom_score_adj, and cgroup controllers are restricted.
+# Enable KubeletInUserNamespace so kubelet tolerates these restrictions.
+# Note: k3s --rootless is NOT suitable here — it is designed for running k3s
+# as a non-root user on the host, not inside an already-rootless container.
+if [ -r /proc/self/uid_map ]; then
+	_inner_uid=$(awk 'NR==1{print $1}' /proc/self/uid_map)
+	_outer_uid=$(awk 'NR==1{print $2}' /proc/self/uid_map)
+	if [ "$_inner_uid" = "0" ] && [ "$_outer_uid" != "0" ]; then
+		echo "Detected user namespace (rootless container) — enabling KubeletInUserNamespace"
+		EXTRA_KUBELET_ARGS="$EXTRA_KUBELET_ARGS --kubelet-arg=feature-gates=KubeletInUserNamespace=true"
+
+		# k3s requires IP forwarding. In rootless containers the sysctl
+		# may default to 0 since the network namespace is isolated.
+		if [ "$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null)" = "0" ]; then
+			echo 1 >/proc/sys/net/ipv4/ip_forward 2>/dev/null || true
+		fi
+
+		# Rootless containers need cgroup v2 delegation from the host so
+		# k3s can create its cgroup hierarchy (kubepods, besteffort, etc.).
+		# Test by attempting to create and remove a probe directory.
+		if [ -d /sys/fs/cgroup ] && ! mkdir /sys/fs/cgroup/.k3s-probe 2>/dev/null; then
+			echo "" >&2
+			echo "Error: Cannot write to cgroup hierarchy (/sys/fs/cgroup)" >&2
+			echo "" >&2
+			echo "Rootless Podman requires the host to delegate cgroup controllers." >&2
+			echo "This is a one-time host setup (requires sudo):" >&2
+			echo "" >&2
+			echo "  sudo mkdir -p /etc/systemd/system/user@.service.d" >&2
+			echo "  sudo tee /etc/systemd/system/user@.service.d/delegate.conf <<'DEOF'" >&2
+			echo "  [Service]" >&2
+			echo "  Delegate=cpu cpuset io memory pids" >&2
+			echo "  DEOF" >&2
+			echo "  sudo systemctl daemon-reload" >&2
+			echo "" >&2
+			echo "Then log out and back in (or reboot)." >&2
+			exit 1
+		fi
+		rmdir /sys/fs/cgroup/.k3s-probe 2>/dev/null || true
+	fi
+fi
+
 # On kernels where xt_comment is unavailable, kube-router's network policy
 # controller panics at startup. Disable it when the iptables-legacy probe
 # triggered; sandbox isolation is enforced by the NSSH1 HMAC handshake instead.

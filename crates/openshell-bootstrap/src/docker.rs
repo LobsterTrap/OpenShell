@@ -184,7 +184,7 @@ pub async fn check_docker_available() -> Result<DockerPreflight> {
 }
 
 /// Create a bollard client connected to the local daemon for the given runtime.
-fn connect_local(runtime: ContainerRuntime) -> Result<Docker> {
+pub(crate) fn connect_local(runtime: ContainerRuntime) -> Result<Docker> {
     match runtime {
         ContainerRuntime::Docker => Docker::connect_with_local_defaults().map_err(|err| {
             runtime_not_reachable_error(
@@ -644,6 +644,8 @@ pub async fn ensure_container(
         // (cpu, cpuset, memory, pids, etc.) required for pod QoS. With cgroup v2
         // and a private cgroupns, the controllers are not delegated into the
         // container's namespace, causing kubelet ContainerManager to fail.
+        // For rootless Podman, k3s --rootless mode handles cgroup limitations
+        // internally (set by the entrypoint when a user namespace is detected).
         cgroupns_mode: Some(HostConfigCgroupnsModeEnum::HOST),
         port_bindings: Some(port_bindings),
         binds: Some(vec![format!("{}:/var/lib/rancher/k3s", volume_name(name))]),

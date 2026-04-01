@@ -57,13 +57,8 @@ fi
 
 $CONTAINER_RUNTIME tag "${resolved_source_image}" "${TARGET_IMAGE}"
 
-# Podman defaults to HTTPS for all registries. The local dev registry at
-# 127.0.0.1:5000 runs plain HTTP, so we must pass --tls-verify=false.
-PUSH_ARGS=()
-if [[ "${CONTAINER_RUNTIME}" == "podman" ]] && [[ "${TARGET_IMAGE}" == 127.0.0.1:* || "${TARGET_IMAGE}" == localhost:* ]]; then
-	PUSH_ARGS=(--tls-verify=false)
-fi
-$CONTAINER_RUNTIME push "${PUSH_ARGS[@]+"${PUSH_ARGS[@]}"}" "${TARGET_IMAGE}"
+podman_local_tls_args "${TARGET_IMAGE}"
+$CONTAINER_RUNTIME push ${PODMAN_TLS_ARGS[@]+"${PODMAN_TLS_ARGS[@]}"} "${TARGET_IMAGE}"
 
 # Evict the stale image from k3s's containerd cache so new pods pull the
 # updated image. Without this, k3s uses its cached copy (imagePullPolicy

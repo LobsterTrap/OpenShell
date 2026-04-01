@@ -13,19 +13,12 @@ use std::process::Command;
 use std::time::Duration;
 
 use openshell_e2e::harness::port::find_free_port;
+use openshell_e2e::harness::runtime::container_runtime_binary;
 use openshell_e2e::harness::sandbox::SandboxGuard;
 use tempfile::NamedTempFile;
 use tokio::time::{interval, timeout};
 
 const TEST_SERVER_IMAGE: &str = "public.ecr.aws/docker/library/python:3.13-alpine";
-
-/// Return the container runtime binary name ("podman" or "docker").
-fn container_runtime_binary() -> &'static str {
-    static RUNTIME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    RUNTIME.get_or_init(|| {
-        std::env::var("OPENSHELL_CONTAINER_RUNTIME").unwrap_or_else(|_| "docker".to_string())
-    })
-}
 
 struct DockerServer {
     port: u16,

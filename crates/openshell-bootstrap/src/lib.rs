@@ -620,15 +620,18 @@ where
 /// For local gateways, pass `None` for remote options.
 /// For remote gateways, pass the same `RemoteOptions` used during deployment.
 pub async fn gateway_handle(name: &str, remote: Option<&RemoteOptions>) -> Result<GatewayHandle> {
-    let runtime = detect_runtime(None)?;
-    let docker = match remote {
-        Some(remote_opts) => create_ssh_docker_client(remote_opts).await?,
-        None => Docker::connect_with_local_defaults().into_diagnostic()?,
-    };
-    // Try to load existing metadata, fall back to creating new metadata
-    // with the default ports (the actual ports are only known at deploy time).
+    // Load metadata first so we can read the stored runtime.
     let metadata = load_gateway_metadata(name)
         .unwrap_or_else(|_| create_gateway_metadata(name, remote, DEFAULT_GATEWAY_PORT));
+
+    // Use stored runtime from metadata, falling back to auto-detection.
+    let runtime = ContainerRuntime::from_str_loose(&metadata.container_runtime)
+        .unwrap_or_else(|_| detect_runtime(None).unwrap_or(ContainerRuntime::Docker));
+
+    let docker = match remote {
+        Some(remote_opts) => create_ssh_docker_client(remote_opts).await?,
+        None => docker::connect_local(runtime)?,
+    };
     Ok(GatewayHandle {
         name: name.to_string(),
         metadata,

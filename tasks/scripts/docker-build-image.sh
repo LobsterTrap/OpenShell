@@ -194,15 +194,21 @@ if [[ "${CONTAINER_RUNTIME}" == "podman" ]]; then
 	#
 	# When pushing to a local HTTP registry (e.g. 127.0.0.1:5000), Podman
 	# defaults to HTTPS and will fail. Pass --tls-verify=false in that case.
-	TLS_ARGS=()
-	if [[ "${IMAGE_NAME:-}" == 127.0.0.1:* || "${IMAGE_NAME:-}" == localhost:* ]]; then
-		TLS_ARGS=(--tls-verify=false)
-	fi
+	podman_local_tls_args "${IMAGE_NAME:-}"
+	TLS_ARGS=(${PODMAN_TLS_ARGS[@]+"${PODMAN_TLS_ARGS[@]}"})
+	# Filter OUTPUT_ARGS: Podman stores images locally by default (no --load)
+	PODMAN_OUTPUT_ARGS=()
+	for arg in ${OUTPUT_ARGS[@]+"${OUTPUT_ARGS[@]}"}; do
+		case "${arg}" in
+		--load) ;; # implicit in Podman
+		*) PODMAN_OUTPUT_ARGS+=("${arg}") ;;
+		esac
+	done
 	podman build \
 		--layers \
 		"${COMMON_BUILD_ARGS[@]}" \
 		${TLS_ARGS[@]+"${TLS_ARGS[@]}"} \
-		${OUTPUT_ARGS[@]+"${OUTPUT_ARGS[@]}"} \
+		${PODMAN_OUTPUT_ARGS[@]+"${PODMAN_OUTPUT_ARGS[@]}"} \
 		.
 else
 	# Docker: use buildx

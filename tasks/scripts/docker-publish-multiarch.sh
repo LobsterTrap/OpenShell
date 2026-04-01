@@ -27,6 +27,7 @@ fi
 
 if [[ "${CONTAINER_RUNTIME}" == "podman" ]]; then
 	echo "Using Podman for multi-arch build (podman manifest)"
+	export DOCKER_BUILDER=""
 else
 	BUILDER_NAME=${DOCKER_BUILDER:-multiarch}
 	if docker buildx inspect "${BUILDER_NAME}" >/dev/null 2>&1; then
@@ -36,9 +37,8 @@ else
 		echo "Creating multi-platform buildx builder: ${BUILDER_NAME}..."
 		docker buildx create --name "${BUILDER_NAME}" --use --bootstrap
 	fi
+	export DOCKER_BUILDER="${BUILDER_NAME}"
 fi
-
-export DOCKER_BUILDER="${BUILDER_NAME}"
 export DOCKER_PLATFORM="${PLATFORMS}"
 export DOCKER_PUSH=1
 export IMAGE_REGISTRY="${REGISTRY}"

@@ -32,5 +32,17 @@ detect_container_runtime() {
 	exit 1
 }
 
+# Sets PODMAN_TLS_ARGS to ("--tls-verify=false") when using Podman with a
+# local HTTP registry, or () otherwise.
+# Usage: podman_local_tls_args "${image_ref}"
+#        $CONTAINER_RUNTIME push ${PODMAN_TLS_ARGS[@]+"${PODMAN_TLS_ARGS[@]}"} ...
+podman_local_tls_args() {
+	PODMAN_TLS_ARGS=()
+	local ref="${1:-}"
+	if [[ "${CONTAINER_RUNTIME}" == "podman" ]] && [[ "${ref}" == 127.0.0.1:* || "${ref}" == localhost:* ]]; then
+		PODMAN_TLS_ARGS=(--tls-verify=false)
+	fi
+}
+
 # Auto-detect on source
 detect_container_runtime

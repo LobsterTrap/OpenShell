@@ -381,14 +381,9 @@ fi
 if [[ "${#pushed_images[@]}" -gt 0 ]]; then
 	push_start=$(date +%s)
 	echo "Pushing updated images to local registry..."
-	# Podman defaults to HTTPS for all registries. The local dev registry
-	# runs plain HTTP, so we must pass --tls-verify=false.
-	PUSH_ARGS=()
-	if [[ "${CONTAINER_RUNTIME}" == "podman" ]] && [[ "${IMAGE_REPO_BASE}" == 127.0.0.1:* || "${IMAGE_REPO_BASE}" == localhost:* ]]; then
-		PUSH_ARGS=(--tls-verify=false)
-	fi
+	podman_local_tls_args "${IMAGE_REPO_BASE}"
 	for image_ref in "${pushed_images[@]}"; do
-		$CONTAINER_RUNTIME push "${PUSH_ARGS[@]+"${PUSH_ARGS[@]}"}" "${image_ref}"
+		$CONTAINER_RUNTIME push ${PODMAN_TLS_ARGS[@]+"${PODMAN_TLS_ARGS[@]}"} "${image_ref}"
 	done
 	push_end=$(date +%s)
 	log_duration "Image push" "${push_start}" "${push_end}"
