@@ -573,6 +573,22 @@ if [ -r /proc/self/uid_map ]; then
 			echo 1 >/proc/sys/net/ipv4/ip_forward 2>/dev/null || true
 		fi
 
+		# With private cgroupns, the root cgroup has processes (PID 1, etc.)
+		# which prevents enabling memory/io controllers in subtree_control
+		# (cgroup v2 "no internal process" constraint). Move all root
+		# processes to an init child cgroup, then enable all controllers.
+		if [ -f /sys/fs/cgroup/cgroup.subtree_control ]; then
+			mkdir -p /sys/fs/cgroup/init 2>/dev/null || true
+			# Move all processes from root cgroup to init child
+			while read -r _pid; do
+				echo "$_pid" >/sys/fs/cgroup/init/cgroup.procs 2>/dev/null || true
+			done </sys/fs/cgroup/cgroup.procs
+			# Now enable all controllers in the root subtree_control
+			for _ctrl in cpuset cpu io memory pids; do
+				echo "+$_ctrl" >/sys/fs/cgroup/cgroup.subtree_control 2>/dev/null || true
+			done
+		fi
+
 		# Rootless containers need cgroup v2 delegation from the host so
 		# k3s can create its cgroup hierarchy (kubepods, besteffort, etc.).
 		# Test by attempting to create and remove a probe directory.

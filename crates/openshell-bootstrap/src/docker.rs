@@ -601,6 +601,7 @@ pub async fn ensure_container(
     registry_username: Option<&str>,
     registry_token: Option<&str>,
     device_ids: &[String],
+    runtime: ContainerRuntime,
 ) -> Result<u16> {
     let container_name = container_name(name);
 
@@ -695,15 +696,20 @@ pub async fn ensure_container(
     );
     let exposed_ports = vec!["30051/tcp".to_string()];
 
+    // Docker needs host cgroup namespace so k3s kubelet can manage cgroup
+    // controllers (cpu, cpuset, memory, pids, etc.) required for pod QoS.
+    // Rootless Podman with cgroupns=host mounts the host cgroup tree
+    // read-only (user namespace restriction), so it needs a private cgroup
+    // namespace where the delegated controllers are writable.
+    let cgroupns = if runtime == ContainerRuntime::Podman {
+        HostConfigCgroupnsModeEnum::PRIVATE
+    } else {
+        HostConfigCgroupnsModeEnum::HOST
+    };
+
     let mut host_config = HostConfig {
         privileged: Some(true),
-        // Use host cgroup namespace so k3s kubelet can manage cgroup controllers
-        // (cpu, cpuset, memory, pids, etc.) required for pod QoS. With cgroup v2
-        // and a private cgroupns, the controllers are not delegated into the
-        // container's namespace, causing kubelet ContainerManager to fail.
-        // For rootless Podman, k3s --rootless mode handles cgroup limitations
-        // internally (set by the entrypoint when a user namespace is detected).
-        cgroupns_mode: Some(HostConfigCgroupnsModeEnum::HOST),
+        cgroupns_mode: Some(cgroupns),
         port_bindings: Some(port_bindings),
         binds: Some(vec![format!("{}:/var/lib/rancher/k3s", volume_name(name))]),
         network_mode: Some(network_name(name)),
