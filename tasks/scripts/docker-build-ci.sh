@@ -19,13 +19,16 @@ elif [[ "${DOCKER_PLATFORM:-}" == *","* ]]; then
 fi
 
 if [[ "${CONTAINER_RUNTIME}" == "podman" ]]; then
-	exec podman build \
+	podman build \
 		--layers \
 		${DOCKER_PLATFORM:+--platform ${DOCKER_PLATFORM}} \
 		-f deploy/docker/Dockerfile.ci \
 		-t "openshell/ci:${IMAGE_TAG:-dev}" \
 		"$@" \
 		.
+	if [[ "${DOCKER_PUSH:-}" == "1" || "${DOCKER_PLATFORM:-}" == *","* ]]; then
+		podman push "openshell/ci:${IMAGE_TAG:-dev}"
+	fi
 else
 	exec docker buildx build \
 		${DOCKER_BUILDER:+--builder ${DOCKER_BUILDER}} \

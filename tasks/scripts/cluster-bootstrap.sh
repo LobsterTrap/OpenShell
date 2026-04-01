@@ -8,11 +8,6 @@ set -euo pipefail
 # shellcheck source=detect-container-runtime.sh
 source "$(dirname "$0")/detect-container-runtime.sh"
 
-# Normalize cluster name: lowercase, replace invalid chars with hyphens
-normalize_name() {
-	echo "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g' | sed 's/--*/-/g' | sed 's/^-//;s/-$//'
-}
-
 MODE=${1:-build}
 if [ "${MODE}" != "build" ] && [ "${MODE}" != "fast" ]; then
 	echo "usage: $0 [build|fast]" >&2
@@ -187,7 +182,11 @@ ensure_local_registry() {
 
 REGISTRY_ENDPOINT_DEFAULT=${REGISTRY_HOST}
 if is_local_registry_host; then
-	REGISTRY_ENDPOINT_DEFAULT=host.docker.internal:5000
+	if [ "$CONTAINER_RUNTIME" = "podman" ]; then
+		REGISTRY_ENDPOINT_DEFAULT=host.containers.internal:5000
+	else
+		REGISTRY_ENDPOINT_DEFAULT=host.docker.internal:5000
+	fi
 fi
 
 REGISTRY_INSECURE_DEFAULT=false

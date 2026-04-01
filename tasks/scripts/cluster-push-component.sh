@@ -22,11 +22,6 @@ gateway) ;;
 	;;
 esac
 
-# Normalize cluster name: lowercase, replace invalid chars with hyphens
-normalize_name() {
-	echo "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g' | sed 's/--*/-/g' | sed 's/^-//;s/-$//'
-}
-
 IMAGE_TAG=${IMAGE_TAG:-dev}
 IMAGE_REPO_BASE=${IMAGE_REPO_BASE:-${OPENSHELL_REGISTRY:-127.0.0.1:5000/openshell}}
 CLUSTER_NAME=${CLUSTER_NAME:-$(basename "$PWD")}

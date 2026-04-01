@@ -1012,6 +1012,10 @@ pub async fn gateway_add(
             (None, None)
         };
 
+        let detected_runtime = openshell_bootstrap::detect_runtime(None)
+            .map(|r| r.binary_name().to_string())
+            .unwrap_or_else(|_| "docker".to_string());
+
         let metadata = GatewayMetadata {
             name: name.to_string(),
             gateway_endpoint: endpoint.clone(),
@@ -1022,7 +1026,7 @@ pub async fn gateway_add(
             auth_mode: Some("mtls".to_string()),
             edge_team_domain: None,
             edge_auth_url: None,
-            container_runtime: "docker".to_string(),
+            container_runtime: detected_runtime,
         };
 
         store_gateway_metadata(name, &metadata)?;
@@ -1042,6 +1046,10 @@ pub async fn gateway_add(
         eprintln!("{} TLS certificates extracted", "✓".green().bold());
     } else {
         // Cloud (edge-authenticated) gateway.
+        let detected_runtime = openshell_bootstrap::detect_runtime(None)
+            .map(|r| r.binary_name().to_string())
+            .unwrap_or_else(|_| "docker".to_string());
+
         let metadata = GatewayMetadata {
             name: name.to_string(),
             gateway_endpoint: endpoint.clone(),
@@ -1052,7 +1060,7 @@ pub async fn gateway_add(
             auth_mode: Some("cloudflare_jwt".to_string()),
             edge_team_domain: None,
             edge_auth_url: None,
-            container_runtime: "docker".to_string(),
+            container_runtime: detected_runtime,
         };
 
         store_gateway_metadata(name, &metadata)?;
@@ -1774,7 +1782,7 @@ pub async fn doctor_check(container_runtime: Option<&str>) -> Result<()> {
     write!(stdout, "{label}{dots} ").into_diagnostic()?;
     stdout.flush().into_diagnostic()?;
 
-    match openshell_bootstrap::check_docker_available().await {
+    match openshell_bootstrap::check_runtime_available(runtime).await {
         Ok(preflight) => {
             let version_str = preflight.version.as_deref().unwrap_or("unknown");
             writeln!(stdout, "ok (version {version_str})").into_diagnostic()?;

@@ -188,9 +188,10 @@ COMMON_BUILD_ARGS=(
 )
 
 if [[ "${CONTAINER_RUNTIME}" == "podman" ]]; then
-	# Podman: use native build (no buildx)
+	# Podman: use native build (no buildx).
 	# --layers enables intermediate layer caching (Podman's equivalent of
-	# BuildKit layer caching)
+	# BuildKit layer caching). BuildKit-specific features (sccache and cargo
+	# registry cache mounts) are not available — Podman builds may be slower.
 	#
 	# When pushing to a local HTTP registry (e.g. 127.0.0.1:5000), Podman
 	# defaults to HTTPS and will fail. Pass --tls-verify=false in that case.

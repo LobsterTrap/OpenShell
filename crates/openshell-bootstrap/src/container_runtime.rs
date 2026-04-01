@@ -8,7 +8,7 @@
 //! explicit override via the `OPENSHELL_CONTAINER_RUNTIME` environment variable
 //! or `--container-runtime` CLI flag.
 
-use miette::{Result, miette};
+use miette::{miette, Result};
 use std::fmt;
 use std::path::Path;
 use std::sync::OnceLock;
@@ -64,8 +64,23 @@ impl ContainerRuntime {
 
     /// Parse a string into a `ContainerRuntime`.
     ///
-    /// Accepts `"docker"` or `"podman"` (case-insensitive).
+    /// Accepts `"docker"` or `"podman"` (case-insensitive). Prefer `.parse()`
+    /// via the [`FromStr`] impl; this method is a convenience alias.
     pub fn from_str_loose(s: &str) -> Result<Self> {
+        s.parse()
+    }
+}
+
+impl fmt::Display for ContainerRuntime {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.display_name())
+    }
+}
+
+impl std::str::FromStr for ContainerRuntime {
+    type Err = miette::Report;
+
+    fn from_str(s: &str) -> std::result::Result<Self, Self::Err> {
         match s.to_ascii_lowercase().as_str() {
             "docker" => Ok(Self::Docker),
             "podman" => Ok(Self::Podman),
@@ -76,13 +91,12 @@ impl ContainerRuntime {
     }
 }
 
-impl fmt::Display for ContainerRuntime {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.display_name())
-    }
-}
-
-/// Cached result of runtime detection so we only probe once per process.
+/// Cached result of auto-detected runtime (branch 3 of [`detect_runtime`]).
+///
+/// CLI overrides and env var checks bypass this cache on every call. Only
+/// the auto-detect fallback is cached — changes to `OPENSHELL_CONTAINER_RUNTIME`
+/// after the first `detect_runtime(None)` call are not picked up for the
+/// auto-detect path.
 static DETECTED_RUNTIME: OnceLock<ContainerRuntime> = OnceLock::new();
 
 /// Detect the container runtime, accepting an optional CLI override.
@@ -195,7 +209,7 @@ fn podman_rootless_socket_path() -> Option<String> {
 /// Get the current user's UID.
 ///
 /// Reads `/proc/self/status` to avoid a `libc` dependency.
-fn current_uid() -> Option<u32> {
+pub(crate) fn current_uid() -> Option<u32> {
     let status = std::fs::read_to_string("/proc/self/status").ok()?;
     for line in status.lines() {
         // Format: "Uid:\t<real>\t<effective>\t<saved>\t<filesystem>"

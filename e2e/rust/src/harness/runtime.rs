@@ -9,6 +9,19 @@
 pub fn container_runtime_binary() -> &'static str {
     static RUNTIME: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     RUNTIME.get_or_init(|| {
-        std::env::var("OPENSHELL_CONTAINER_RUNTIME").unwrap_or_else(|_| "docker".to_string())
+        std::env::var("OPENSHELL_CONTAINER_RUNTIME").unwrap_or_else(|_| {
+            // Match bootstrap detection: prefer podman when available
+            if std::process::Command::new("podman")
+                .arg("--version")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .is_ok_and(|s| s.success())
+            {
+                "podman".to_string()
+            } else {
+                "docker".to_string()
+            }
+        })
     })
 }

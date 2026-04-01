@@ -894,7 +894,13 @@ fn sandbox_template_to_k8s(
     // network namespace creation), NET_ADMIN (for network namespace veth setup),
     // SYS_PTRACE (for the CONNECT proxy to read /proc/<pid>/fd/ of sandbox-user
     // processes to resolve binary identity for network policy enforcement),
-    // and SYSLOG (for reading /dev/kmsg to surface bypass detection diagnostics).
+    // SYSLOG (for reading /dev/kmsg to surface bypass detection diagnostics),
+    // and SETUID/SETGID (required for rootless container runtimes such as Podman,
+    // where the sandbox process must map supplementary UIDs/GIDs within the user
+    // namespace to set up the container filesystem and run processes as non-root
+    // users inside the sandbox. These are already in Docker's default capability
+    // set so adding them explicitly is a no-op there, but Podman drops them by
+    // default and requires them to be explicitly requested).
     // This mirrors the capabilities used by `mise run sandbox`.
     container.insert(
         "securityContext".to_string(),

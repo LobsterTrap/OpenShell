@@ -48,7 +48,8 @@ use crate::runtime::{
 pub use crate::constants::container_name;
 pub use crate::container_runtime::{ContainerRuntime, detect_runtime};
 pub use crate::docker::{
-    DockerPreflight, ExistingGatewayInfo, check_docker_available, create_ssh_docker_client,
+    DockerPreflight, ExistingGatewayInfo, check_docker_available, check_runtime_available,
+    create_ssh_docker_client,
 };
 pub use crate::metadata::{
     GatewayMetadata, clear_active_gateway, clear_last_sandbox_if_matches,
@@ -313,7 +314,7 @@ where
         (remote, Some(remote_opts.clone()))
     } else {
         log(format!("[status] Checking {}", runtime.display_name()));
-        let preflight = docker::check_runtime_available(runtime).await?;
+        let preflight = check_runtime_available(runtime).await?;
         (preflight.docker, None)
     };
 

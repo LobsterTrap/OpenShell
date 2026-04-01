@@ -44,5 +44,11 @@ podman_local_tls_args() {
 	fi
 }
 
+# General utility: normalize a name to lowercase with hyphens only.
+# Included here because all cluster scripts already source this file.
+normalize_name() {
+	echo "$1" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g' | sed 's/--*/-/g' | sed 's/^-//;s/-$//'
+}
+
 # Auto-detect on source
 detect_container_runtime

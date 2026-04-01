@@ -25,6 +25,11 @@ use std::collections::HashMap;
 
 const REGISTRY_NAMESPACE_DEFAULT: &str = "openshell";
 
+/// Health check interval and timeout in nanoseconds (5 seconds).
+const HEALTH_CHECK_INTERVAL_NS: i64 = 5 * 1_000_000_000;
+/// Health check start period in nanoseconds (20 seconds).
+const HEALTH_CHECK_START_PERIOD_NS: i64 = 20 * 1_000_000_000;
+
 /// Resolve the raw GPU device-ID list, replacing the `"auto"` sentinel with a
 /// concrete device ID based on whether CDI is enabled on the daemon and which
 /// container runtime is in use.
@@ -190,16 +195,7 @@ pub async fn check_runtime_available(runtime: ContainerRuntime) -> Result<Docker
 /// the common case early so users don't wait for image builds to fail.
 fn check_rootless_cgroup_delegation() {
     // Only relevant on cgroup v2 systems in a user namespace.
-    // Read real UID from /proc/self/status to avoid adding a libc/nix dependency.
-    let status = match std::fs::read_to_string("/proc/self/status") {
-        Ok(s) => s,
-        Err(_) => return,
-    };
-    let uid = status
-        .lines()
-        .find_map(|line| line.strip_prefix("Uid:\t").map(|v| v.split('\t').next()))
-        .and_then(|v| v?.parse::<u32>().ok());
-    let uid = match uid {
+    let uid = match crate::container_runtime::current_uid() {
         Some(uid) => uid,
         None => return,
     };
@@ -890,9 +886,9 @@ pub async fn ensure_container(
             "CMD".to_string(),
             "/usr/local/bin/cluster-healthcheck.sh".to_string(),
         ]),
-        interval: Some(5_000_000_000),      // 5s in nanoseconds
-        timeout: Some(5_000_000_000),       // 5s
-        start_period: Some(20_000_000_000), // 20s
+        interval: Some(HEALTH_CHECK_INTERVAL_NS),
+        timeout: Some(HEALTH_CHECK_INTERVAL_NS),
+        start_period: Some(HEALTH_CHECK_START_PERIOD_NS),
         retries: Some(60),
         ..Default::default()
     };
