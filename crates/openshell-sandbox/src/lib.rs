@@ -895,8 +895,8 @@ const PROXY_BASELINE_READ_ONLY: &[&str] = &[
 ];
 
 /// Minimum read-write paths required for a proxy-mode sandbox child process:
-/// user working directory and temporary files.
-const PROXY_BASELINE_READ_WRITE: &[&str] = &["/sandbox", "/tmp"];
+/// user working directory, temporary files, and /dev/null for output redirection.
+const PROXY_BASELINE_READ_WRITE: &[&str] = &["/sandbox", "/tmp", "/dev/null"];
 
 /// GPU read-only paths.
 ///
