@@ -900,7 +900,7 @@ fn sandbox_template_to_k8s(
         "securityContext".to_string(),
         serde_json::json!({
             "capabilities": {
-                "add": ["SYS_ADMIN", "NET_ADMIN", "SYS_PTRACE", "SYSLOG"]
+                "add": ["SYS_ADMIN", "NET_ADMIN", "SYS_PTRACE", "SYSLOG", "SETUID", "SETGID"]
             }
         }),
     );
@@ -1475,7 +1475,7 @@ mod tests {
                     "image": "custom-image:latest",
                     "securityContext": {
                         "capabilities": {
-                            "add": ["SYS_ADMIN", "NET_ADMIN", "SYS_PTRACE", "SYSLOG"]
+                "add": ["SYS_ADMIN", "NET_ADMIN", "SYS_PTRACE", "SYSLOG", "SETUID", "SETGID"]
                         }
                     }
                 }]
