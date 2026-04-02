@@ -6,6 +6,7 @@ name: Midstream Container Build
 on:
   push:
     branches: [midstream]
+  workflow_dispatch:
 
 permissions:
   contents: read
