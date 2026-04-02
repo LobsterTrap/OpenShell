@@ -1,0 +1,123 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+name: Midstream Container Build
+
+on:
+  push:
+    branches: [midstream]
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_REGISTRY: ghcr.io/lobstertrap/openshell
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Build container images natively on per-arch runners
+  # ---------------------------------------------------------------------------
+  build:
+    name: Build ${{ matrix.component }} (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - component: gateway
+            arch: amd64
+            runner: ubuntu-latest
+            platform: linux/amd64
+          - component: gateway
+            arch: arm64
+            runner: ubuntu-latest-arm64
+            platform: linux/arm64
+          - component: cluster
+            arch: amd64
+            runner: ubuntu-latest
+            platform: linux/amd64
+          - component: cluster
+            arch: arm64
+            runner: ubuntu-latest-arm64
+            platform: linux/arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push (${{ matrix.component }}/${{ matrix.arch }})
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/Dockerfile.images
+          target: ${{ matrix.component }}
+          platforms: ${{ matrix.platform }}
+          push: true
+          tags: ${{ env.IMAGE_REGISTRY }}/${{ matrix.component }}:${{ github.sha }}-${{ matrix.arch }}
+          cache-from: type=gha,scope=${{ matrix.component }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.component }}-${{ matrix.arch }}
+
+  # ---------------------------------------------------------------------------
+  # Merge per-arch images into multi-arch manifests
+  # ---------------------------------------------------------------------------
+  merge-gateway:
+    name: Merge gateway manifest
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Create multi-arch manifest
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create \
+            -t "${{ env.IMAGE_REGISTRY }}/gateway:${{ github.sha }}" \
+            -t "${{ env.IMAGE_REGISTRY }}/gateway:midstream" \
+            "${{ env.IMAGE_REGISTRY }}/gateway:${{ github.sha }}-amd64" \
+            "${{ env.IMAGE_REGISTRY }}/gateway:${{ github.sha }}-arm64"
+
+  merge-cluster:
+    name: Merge cluster manifest
+    runs-on: ubuntu-latest
+    needs: [build]
+    steps:
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Create multi-arch manifest
+        run: |
+          set -euo pipefail
+          docker buildx imagetools create \
+            -t "${{ env.IMAGE_REGISTRY }}/cluster:${{ github.sha }}" \
+            -t "${{ env.IMAGE_REGISTRY }}/cluster:midstream" \
+            "${{ env.IMAGE_REGISTRY }}/cluster:${{ github.sha }}-amd64" \
+            "${{ env.IMAGE_REGISTRY }}/cluster:${{ github.sha }}-arm64"
