@@ -8,7 +8,7 @@
 //! explicit override via the `OPENSHELL_CONTAINER_RUNTIME` environment variable
 //! or `--container-runtime` CLI flag.
 
-use miette::{miette, Result};
+use miette::{Result, miette};
 use std::fmt;
 use std::path::Path;
 
@@ -206,7 +206,7 @@ fn podman_rootless_socket_path() -> Option<String> {
 /// Get the current user's UID by reading `/proc/self/status`.
 ///
 /// Returns `None` on non-Linux systems or if the file cannot be parsed.
-pub(crate) fn current_uid() -> Option<u32> {
+fn current_uid() -> Option<u32> {
     let status = std::fs::read_to_string("/proc/self/status").ok()?;
     for line in status.lines() {
         // Format: "Uid:\t<real>\t<effective>\t<saved>\t<filesystem>"
@@ -231,6 +231,13 @@ fn has_binary(name: &str) -> bool {
 // Socket path accessors (used by the bollard client abstraction in docker.rs)
 // ---------------------------------------------------------------------------
 
+/// Push `path` into `found` if the socket file exists and isn't already listed.
+fn push_if_socket_exists(found: &mut Vec<String>, path: &str) {
+    if Path::new(path).exists() && !found.iter().any(|existing| existing == path) {
+        found.push(path.to_string());
+    }
+}
+
 /// Return all Podman socket paths that exist on this system.
 ///
 /// Used by the bollard client connection logic to find the right socket.
@@ -238,15 +245,10 @@ pub fn find_podman_sockets() -> Vec<String> {
     let mut found = Vec::new();
 
     if let Some(path) = podman_rootless_socket_path() {
-        if Path::new(&path).exists() {
-            found.push(path);
-        }
+        push_if_socket_exists(&mut found, &path);
     }
-
     for path in PODMAN_ROOTFUL_SOCKET_PATHS {
-        if Path::new(path).exists() && !found.iter().any(|p| p == path) {
-            found.push((*path).to_string());
-        }
+        push_if_socket_exists(&mut found, path);
     }
 
     found
@@ -262,16 +264,12 @@ pub fn find_docker_sockets() -> Vec<String> {
     // Check DOCKER_HOST for a unix socket path
     if let Ok(docker_host) = std::env::var("DOCKER_HOST") {
         if let Some(path) = docker_host.strip_prefix("unix://") {
-            if Path::new(path).exists() && !found.contains(&path.to_string()) {
-                found.push(path.to_string());
-            }
+            push_if_socket_exists(&mut found, path);
         }
     }
 
     for path in DOCKER_SOCKET_PATHS {
-        if Path::new(path).exists() && !found.contains(&(*path).to_string()) {
-            found.push((*path).to_string());
-        }
+        push_if_socket_exists(&mut found, path);
     }
 
     if let Ok(home) = std::env::var("HOME") {
@@ -279,10 +277,8 @@ pub fn find_docker_sockets() -> Vec<String> {
             format!("{home}/.colima/docker.sock"),
             format!("{home}/.orbstack/run/docker.sock"),
         ];
-        for path in alt_paths {
-            if Path::new(&path).exists() && !found.contains(&path) {
-                found.push(path);
-            }
+        for path in &alt_paths {
+            push_if_socket_exists(&mut found, path);
         }
     }
 

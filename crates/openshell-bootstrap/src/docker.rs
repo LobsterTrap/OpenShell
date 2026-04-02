@@ -4,7 +4,7 @@
 use crate::RemoteOptions;
 use crate::constants::{container_name, network_name, volume_name};
 use crate::container_runtime::{
-    ContainerRuntime, ALL_HOST_GATEWAY_ALIASES, DOCKER_HOST_GATEWAY_ALIAS,
+    ALL_HOST_GATEWAY_ALIASES, ContainerRuntime, DOCKER_HOST_GATEWAY_ALIAS,
     PODMAN_HOST_GATEWAY_ALIAS, find_all_sockets,
 };
 use crate::image::{self, DEFAULT_IMAGE_REPO_BASE, DEFAULT_REGISTRY, parse_image_ref};
@@ -252,14 +252,13 @@ pub(crate) fn connect_local(runtime: ContainerRuntime) -> Result<Docker> {
                 }
             }
 
-            // Fall back to bollard defaults (handles some edge cases)
-            Docker::connect_with_local_defaults().map_err(|err| {
-                runtime_not_reachable_error(
-                    runtime,
-                    &format!("{err}"),
-                    "Failed to connect to Podman",
-                )
-            })
+            // All Podman-specific socket paths exhausted — return a clear error
+            // instead of falling through to Docker's default socket.
+            Err(runtime_not_reachable_error(
+                runtime,
+                "no Podman socket found at standard locations",
+                "Failed to connect to Podman",
+            ))
         }
     }
 }

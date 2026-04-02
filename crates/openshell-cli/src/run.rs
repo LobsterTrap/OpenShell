@@ -985,6 +985,19 @@ pub async fn gateway_add(
         ));
     }
 
+    // Detect the container runtime once for metadata storage. This is
+    // best-effort — gateway add doesn't require a local runtime (the gateway
+    // may be remote or cloud-hosted), so we warn and default to Docker.
+    let detected_runtime = match openshell_bootstrap::detect_runtime(None) {
+        Ok(rt) => rt,
+        Err(_) => {
+            tracing::warn!(
+                "no container runtime detected, defaulting to Docker for gateway metadata"
+            );
+            openshell_bootstrap::ContainerRuntime::default()
+        }
+    };
+
     if remote.is_some() || local {
         // mTLS gateway (remote or local).
         let remote_opts = remote.map(|dest| {
@@ -1011,9 +1024,6 @@ pub async fn gateway_add(
         } else {
             (None, None)
         };
-
-        let detected_runtime = openshell_bootstrap::detect_runtime(None)
-            .unwrap_or_default();
 
         let metadata = GatewayMetadata {
             name: name.to_string(),
@@ -1045,9 +1055,6 @@ pub async fn gateway_add(
         eprintln!("{} TLS certificates extracted", "✓".green().bold());
     } else {
         // Cloud (edge-authenticated) gateway.
-        let detected_runtime = openshell_bootstrap::detect_runtime(None)
-            .unwrap_or_default();
-
         let metadata = GatewayMetadata {
             name: name.to_string(),
             gateway_endpoint: endpoint.clone(),
