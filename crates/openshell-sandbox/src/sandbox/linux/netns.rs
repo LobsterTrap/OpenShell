@@ -849,45 +849,16 @@ fn run_iptables_netns(netns: &str, iptables_cmd: &str, args: &[&str]) -> Result<
     Ok(())
 }
 
-/// Run an `ip` command inside a PID-based namespace via `nsenter`.
+/// Run a command inside a PID-based network namespace via `nsenter`.
 ///
 /// Used by the `Unshare` namespace mode where there is no named namespace
 /// at `/var/run/netns/` for `ip netns exec` to use.
-fn run_ip_in_ns(pid: u32, args: &[&str]) -> Result<()> {
+fn run_in_ns(pid: u32, cmd: &str, args: &[&str]) -> Result<()> {
     let pid_str = pid.to_string();
-    let mut full_args = vec!["-t", &pid_str, "-n", "--", "ip"];
+    let mut full_args = vec!["-t", &pid_str, "-n", "--", cmd];
     full_args.extend(args);
 
-    debug!(command = %format!("nsenter {}", full_args.join(" ")), "Running ip via nsenter");
-
-    let output = Command::new("nsenter")
-        .args(&full_args)
-        .output()
-        .into_diagnostic()?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(miette::miette!(
-            "nsenter -t {} -n -- ip {} failed: {}",
-            pid,
-            args.join(" "),
-            stderr.trim()
-        ));
-    }
-
-    Ok(())
-}
-
-/// Run an iptables command inside a PID-based namespace via `nsenter`.
-fn run_iptables_in_ns(pid: u32, iptables_cmd: &str, args: &[&str]) -> Result<()> {
-    let pid_str = pid.to_string();
-    let mut full_args = vec!["-t", &pid_str, "-n", "--", iptables_cmd];
-    full_args.extend(args);
-
-    debug!(
-        command = %format!("nsenter {}", full_args.join(" ")),
-        "Running iptables via nsenter"
-    );
+    debug!(command = %format!("nsenter {}", full_args.join(" ")), "Running command via nsenter");
 
     let output = Command::new("nsenter")
         .args(&full_args)
@@ -899,13 +870,23 @@ fn run_iptables_in_ns(pid: u32, iptables_cmd: &str, args: &[&str]) -> Result<()>
         return Err(miette::miette!(
             "nsenter -t {} -n -- {} {} failed: {}",
             pid,
-            iptables_cmd,
+            cmd,
             args.join(" "),
             stderr.trim()
         ));
     }
 
     Ok(())
+}
+
+/// Run an `ip` command inside a PID-based namespace via `nsenter`.
+fn run_ip_in_ns(pid: u32, args: &[&str]) -> Result<()> {
+    run_in_ns(pid, "ip", args)
+}
+
+/// Run an iptables command inside a PID-based namespace via `nsenter`.
+fn run_iptables_in_ns(pid: u32, iptables_cmd: &str, args: &[&str]) -> Result<()> {
+    run_in_ns(pid, iptables_cmd, args)
 }
 
 /// Well-known paths where iptables may be installed.

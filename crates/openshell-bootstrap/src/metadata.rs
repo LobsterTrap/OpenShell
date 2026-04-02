@@ -1,8 +1,9 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
-use crate::RemoteOptions;
+use crate::container_runtime::ContainerRuntime;
 use crate::paths::{active_gateway_path, gateways_dir, last_sandbox_path};
+use crate::RemoteOptions;
 use miette::{IntoDiagnostic, Result, WrapErr};
 use openshell_core::paths::ensure_parent_dir_restricted;
 use serde::{Deserialize, Serialize};
@@ -46,14 +47,10 @@ pub struct GatewayMetadata {
     )]
     pub edge_auth_url: Option<String>,
 
-    /// Container runtime used for this gateway ("docker" or "podman").
-    /// Defaults to "docker" for backward compatibility with existing metadata.
-    #[serde(default = "default_container_runtime")]
-    pub container_runtime: String,
-}
-
-fn default_container_runtime() -> String {
-    "docker".to_string()
+    /// Container runtime used for this gateway.
+    /// Defaults to Docker for backward compatibility with existing metadata.
+    #[serde(default)]
+    pub container_runtime: ContainerRuntime,
 }
 
 impl GatewayMetadata {
@@ -144,7 +141,7 @@ pub fn create_gateway_metadata_with_host(
         auth_mode: None,
         edge_team_domain: None,
         edge_auth_url: None,
-        container_runtime: default_container_runtime(),
+        container_runtime: ContainerRuntime::default(),
     }
 }
 
@@ -292,7 +289,11 @@ pub fn load_active_gateway() -> Option<String> {
     let path = active_gateway_path().ok()?;
     let contents = std::fs::read_to_string(&path).ok()?;
     let name = contents.trim().to_string();
-    if name.is_empty() { None } else { Some(name) }
+    if name.is_empty() {
+        None
+    } else {
+        Some(name)
+    }
 }
 
 /// Save the last-used sandbox name for a gateway to persistent storage.
@@ -312,7 +313,11 @@ pub fn load_last_sandbox(gateway: &str) -> Option<String> {
     let path = last_sandbox_path(gateway).ok()?;
     let contents = std::fs::read_to_string(&path).ok()?;
     let name = contents.trim().to_string();
-    if name.is_empty() { None } else { Some(name) }
+    if name.is_empty() {
+        None
+    } else {
+        Some(name)
+    }
 }
 
 /// Clear the last-used sandbox record for a gateway if it matches the given name.
@@ -479,7 +484,7 @@ mod tests {
             auth_mode: None,
             edge_team_domain: None,
             edge_auth_url: None,
-            container_runtime: "podman".to_string(),
+            container_runtime: ContainerRuntime::Podman,
         };
         let json = serde_json::to_string(&meta).unwrap();
         let parsed: GatewayMetadata = serde_json::from_str(&json).unwrap();

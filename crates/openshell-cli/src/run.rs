@@ -1013,8 +1013,7 @@ pub async fn gateway_add(
         };
 
         let detected_runtime = openshell_bootstrap::detect_runtime(None)
-            .map(|r| r.binary_name().to_string())
-            .unwrap_or_else(|_| "docker".to_string());
+            .unwrap_or_default();
 
         let metadata = GatewayMetadata {
             name: name.to_string(),
@@ -1047,8 +1046,7 @@ pub async fn gateway_add(
     } else {
         // Cloud (edge-authenticated) gateway.
         let detected_runtime = openshell_bootstrap::detect_runtime(None)
-            .map(|r| r.binary_name().to_string())
-            .unwrap_or_else(|_| "docker".to_string());
+            .unwrap_or_default();
 
         let metadata = GatewayMetadata {
             name: name.to_string(),
@@ -1422,7 +1420,7 @@ pub async fn gateway_admin_deploy(
         .with_gpu(gpu)
         .with_recreate(recreate);
     if let Some(rt_str) = container_runtime {
-        let rt = openshell_bootstrap::ContainerRuntime::from_str_loose(rt_str)?;
+        let rt: openshell_bootstrap::ContainerRuntime = rt_str.parse()?;
         options = options.with_container_runtime(rt);
     }
     if let Some(opts) = remote_opts {
@@ -5123,7 +5121,7 @@ mod tests {
             auth_mode: Some("cloudflare_jwt".to_string()),
             edge_team_domain: None,
             edge_auth_url: None,
-            container_runtime: "docker".to_string(),
+            container_runtime: openshell_bootstrap::ContainerRuntime::Docker,
         }
     }
 
@@ -5512,7 +5510,7 @@ mod tests {
                 auth_mode: None,
                 edge_team_domain: None,
                 edge_auth_url: None,
-                container_runtime: "docker".to_string(),
+                container_runtime: openshell_bootstrap::ContainerRuntime::Docker,
             },
         ];
 

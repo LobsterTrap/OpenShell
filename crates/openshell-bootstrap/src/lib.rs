@@ -572,7 +572,7 @@ where
             ssh_gateway_host.as_deref(),
             disable_tls,
         );
-        metadata.container_runtime = runtime.binary_name().to_string();
+        metadata.container_runtime = runtime;
         store_gateway_metadata(&name, &metadata)?;
 
         Ok(metadata)
@@ -626,9 +626,8 @@ pub async fn gateway_handle(name: &str, remote: Option<&RemoteOptions>) -> Resul
     let metadata = load_gateway_metadata(name)
         .unwrap_or_else(|_| create_gateway_metadata(name, remote, DEFAULT_GATEWAY_PORT));
 
-    // Use stored runtime from metadata, falling back to auto-detection.
-    let runtime = ContainerRuntime::from_str_loose(&metadata.container_runtime)
-        .unwrap_or_else(|_| detect_runtime(None).unwrap_or(ContainerRuntime::Docker));
+    // Use stored runtime from metadata (defaults to Docker for old metadata).
+    let runtime = metadata.container_runtime;
 
     let docker = match remote {
         Some(remote_opts) => create_ssh_docker_client(remote_opts).await?,

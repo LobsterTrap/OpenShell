@@ -11,13 +11,37 @@
 #   source "$(dirname "$0")/detect-container-runtime.sh"
 
 detect_container_runtime() {
-	# 1. Explicit override
+	# 1. Explicit override (validated)
 	if [ -n "${OPENSHELL_CONTAINER_RUNTIME:-}" ]; then
-		CONTAINER_RUNTIME="$OPENSHELL_CONTAINER_RUNTIME"
+		case "${OPENSHELL_CONTAINER_RUNTIME}" in
+		docker | podman)
+			CONTAINER_RUNTIME="$OPENSHELL_CONTAINER_RUNTIME"
+			return
+			;;
+		*)
+			echo "Error: OPENSHELL_CONTAINER_RUNTIME='${OPENSHELL_CONTAINER_RUNTIME}' is not valid." >&2
+			echo "       Expected 'docker' or 'podman'." >&2
+			exit 1
+			;;
+		esac
+	fi
+
+	# 2. Probe sockets first (a running daemon is a stronger signal than
+	#    just having the binary on PATH). Matches the Rust detection order.
+	local uid
+	uid=$(id -u 2>/dev/null || true)
+	if [ -S "${XDG_RUNTIME_DIR:-/run/user/${uid}}/podman/podman.sock" ] 2>/dev/null ||
+		[ -S /run/podman/podman.sock ] ||
+		[ -S /var/run/podman/podman.sock ]; then
+		CONTAINER_RUNTIME=podman
+		return
+	fi
+	if [ -S /var/run/docker.sock ]; then
+		CONTAINER_RUNTIME=docker
 		return
 	fi
 
-	# 2. Probe for binaries on PATH (podman preferred)
+	# 3. Fall back to binary on PATH (podman preferred)
 	if command -v podman &>/dev/null; then
 		CONTAINER_RUNTIME=podman
 		return

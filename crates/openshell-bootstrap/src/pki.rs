@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 
+use crate::container_runtime::{DOCKER_HOST_GATEWAY_ALIAS, PODMAN_HOST_GATEWAY_ALIAS};
 use miette::{IntoDiagnostic, Result, WrapErr};
 use rcgen::{BasicConstraints, CertificateParams, DnType, Ia5String, IsCa, KeyPair, SanType};
 use std::net::IpAddr;
@@ -23,8 +24,8 @@ const DEFAULT_SERVER_SANS: &[&str] = &[
     "openshell.openshell.svc",
     "openshell.openshell.svc.cluster.local",
     "localhost",
-    "host.docker.internal",
-    "host.containers.internal",
+    DOCKER_HOST_GATEWAY_ALIAS,
+    PODMAN_HOST_GATEWAY_ALIAS,
     "127.0.0.1",
 ];
 

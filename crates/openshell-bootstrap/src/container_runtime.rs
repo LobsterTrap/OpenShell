@@ -11,13 +11,26 @@
 use miette::{miette, Result};
 use std::fmt;
 use std::path::Path;
-use std::sync::OnceLock;
 
 /// The environment variable used to override runtime auto-detection.
 pub const RUNTIME_ENV_VAR: &str = "OPENSHELL_CONTAINER_RUNTIME";
 
+/// Host-gateway DNS alias used by Docker.
+pub const DOCKER_HOST_GATEWAY_ALIAS: &str = "host.docker.internal";
+/// Host-gateway DNS alias used by Podman.
+pub const PODMAN_HOST_GATEWAY_ALIAS: &str = "host.containers.internal";
+/// OpenShell-specific host-gateway alias.
+pub const OPENSHELL_HOST_GATEWAY_ALIAS: &str = "host.openshell.internal";
+/// All host-gateway aliases injected into containers regardless of runtime.
+pub const ALL_HOST_GATEWAY_ALIASES: &[&str] = &[
+    DOCKER_HOST_GATEWAY_ALIAS,
+    PODMAN_HOST_GATEWAY_ALIAS,
+    OPENSHELL_HOST_GATEWAY_ALIAS,
+];
+
 /// Supported container runtimes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ContainerRuntime {
     Docker,
     Podman,
@@ -38,8 +51,8 @@ impl ContainerRuntime {
     /// `host.containers.internal`.
     pub fn host_gateway_alias(self) -> &'static str {
         match self {
-            Self::Docker => "host.docker.internal",
-            Self::Podman => "host.containers.internal",
+            Self::Docker => DOCKER_HOST_GATEWAY_ALIAS,
+            Self::Podman => PODMAN_HOST_GATEWAY_ALIAS,
         }
     }
 
@@ -61,19 +74,17 @@ impl ContainerRuntime {
             Self::Podman => "Podman",
         }
     }
-
-    /// Parse a string into a `ContainerRuntime`.
-    ///
-    /// Accepts `"docker"` or `"podman"` (case-insensitive). Prefer `.parse()`
-    /// via the [`FromStr`] impl; this method is a convenience alias.
-    pub fn from_str_loose(s: &str) -> Result<Self> {
-        s.parse()
-    }
 }
 
 impl fmt::Display for ContainerRuntime {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.display_name())
+    }
+}
+
+impl Default for ContainerRuntime {
+    fn default() -> Self {
+        Self::Docker
     }
 }
 
@@ -91,45 +102,31 @@ impl std::str::FromStr for ContainerRuntime {
     }
 }
 
-/// Cached result of auto-detected runtime (branch 3 of [`detect_runtime`]).
-///
-/// CLI overrides and env var checks bypass this cache on every call. Only
-/// the auto-detect fallback is cached — changes to `OPENSHELL_CONTAINER_RUNTIME`
-/// after the first `detect_runtime(None)` call are not picked up for the
-/// auto-detect path.
-static DETECTED_RUNTIME: OnceLock<ContainerRuntime> = OnceLock::new();
-
 /// Detect the container runtime, accepting an optional CLI override.
 ///
 /// Priority:
 /// 1. `cli_override` argument (from `--container-runtime` flag)
 /// 2. `OPENSHELL_CONTAINER_RUNTIME` environment variable
 /// 3. Auto-detect by probing sockets and binaries (Podman preferred)
+///
+/// The result is not cached globally — callers should store the result in
+/// their own state (e.g., `DeployOptions`, `GatewayMetadata`).
 pub fn detect_runtime(cli_override: Option<&str>) -> Result<ContainerRuntime> {
     // 1. CLI override takes highest priority
     if let Some(value) = cli_override {
-        return ContainerRuntime::from_str_loose(value);
+        return value.parse();
     }
 
     // 2. Environment variable override
     if let Ok(value) = std::env::var(RUNTIME_ENV_VAR) {
         let value = value.trim();
         if !value.is_empty() {
-            return ContainerRuntime::from_str_loose(value);
+            return value.parse();
         }
     }
 
-    // 3. Auto-detect (cached)
-    let runtime = DETECTED_RUNTIME.get_or_init(|| {
-        auto_detect_runtime().unwrap_or_else(|_| {
-            // If auto-detection fails entirely, fall back to Docker for
-            // backward compatibility. The actual connection attempt will
-            // produce a better error message later.
-            ContainerRuntime::Docker
-        })
-    });
-
-    Ok(*runtime)
+    // 3. Auto-detect by probing sockets and binaries
+    auto_detect_runtime()
 }
 
 /// Auto-detect the container runtime by probing sockets and binaries.
@@ -206,9 +203,9 @@ fn podman_rootless_socket_path() -> Option<String> {
     Some(format!("{runtime_dir}/podman/podman.sock"))
 }
 
-/// Get the current user's UID.
+/// Get the current user's UID by reading `/proc/self/status`.
 ///
-/// Reads `/proc/self/status` to avoid a `libc` dependency.
+/// Returns `None` on non-Linux systems or if the file cannot be parsed.
 pub(crate) fn current_uid() -> Option<u32> {
     let status = std::fs::read_to_string("/proc/self/status").ok()?;
     for line in status.lines() {
@@ -350,43 +347,43 @@ mod tests {
         assert_eq!(format!("{}", ContainerRuntime::Podman), "Podman");
     }
 
-    // --- from_str_loose ---
+    // --- FromStr parsing ---
 
     #[test]
-    fn from_str_loose_docker() {
+    fn parse_docker() {
         assert_eq!(
-            ContainerRuntime::from_str_loose("docker").unwrap(),
+            "docker".parse::<ContainerRuntime>().unwrap(),
             ContainerRuntime::Docker,
         );
     }
 
     #[test]
-    fn from_str_loose_podman() {
+    fn parse_podman() {
         assert_eq!(
-            ContainerRuntime::from_str_loose("podman").unwrap(),
+            "podman".parse::<ContainerRuntime>().unwrap(),
             ContainerRuntime::Podman,
         );
     }
 
     #[test]
-    fn from_str_loose_case_insensitive() {
+    fn parse_case_insensitive() {
         assert_eq!(
-            ContainerRuntime::from_str_loose("Docker").unwrap(),
+            "Docker".parse::<ContainerRuntime>().unwrap(),
             ContainerRuntime::Docker,
         );
         assert_eq!(
-            ContainerRuntime::from_str_loose("PODMAN").unwrap(),
+            "PODMAN".parse::<ContainerRuntime>().unwrap(),
             ContainerRuntime::Podman,
         );
         assert_eq!(
-            ContainerRuntime::from_str_loose("Podman").unwrap(),
+            "Podman".parse::<ContainerRuntime>().unwrap(),
             ContainerRuntime::Podman,
         );
     }
 
     #[test]
-    fn from_str_loose_unknown() {
-        let err = ContainerRuntime::from_str_loose("containerd").unwrap_err();
+    fn parse_unknown() {
+        let err = "containerd".parse::<ContainerRuntime>().unwrap_err();
         let msg = format!("{err}");
         assert!(msg.contains("containerd"), "error should mention the input");
         assert!(
@@ -431,7 +428,7 @@ mod tests {
 
     #[test]
     fn current_uid_returns_value_on_linux() {
-        // On Linux, /proc/self/status should always be readable
+        // On Linux, /proc/self/status should always be readable.
         if cfg!(target_os = "linux") {
             let uid = current_uid();
             assert!(uid.is_some(), "should be able to read UID on Linux");

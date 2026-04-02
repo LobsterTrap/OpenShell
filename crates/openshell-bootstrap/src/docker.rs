@@ -3,7 +3,10 @@
 
 use crate::RemoteOptions;
 use crate::constants::{container_name, network_name, volume_name};
-use crate::container_runtime::{ContainerRuntime, find_all_sockets};
+use crate::container_runtime::{
+    ContainerRuntime, ALL_HOST_GATEWAY_ALIASES, DOCKER_HOST_GATEWAY_ALIAS,
+    PODMAN_HOST_GATEWAY_ALIAS, find_all_sockets,
+};
 use crate::image::{self, DEFAULT_IMAGE_REPO_BASE, DEFAULT_REGISTRY, parse_image_ref};
 use bollard::API_DEFAULT_VERSION;
 use bollard::Docker;
@@ -25,8 +28,10 @@ use std::collections::HashMap;
 
 const REGISTRY_NAMESPACE_DEFAULT: &str = "openshell";
 
-/// Health check interval and timeout in nanoseconds (5 seconds).
+/// Health check interval in nanoseconds (5 seconds).
 const HEALTH_CHECK_INTERVAL_NS: i64 = 5 * 1_000_000_000;
+/// Health check timeout in nanoseconds (5 seconds).
+const HEALTH_CHECK_TIMEOUT_NS: i64 = 5 * 1_000_000_000;
 /// Health check start period in nanoseconds (20 seconds).
 const HEALTH_CHECK_START_PERIOD_NS: i64 = 20 * 1_000_000_000;
 
@@ -174,59 +179,11 @@ pub async fn check_runtime_available(runtime: ContainerRuntime) -> Result<Docker
         Err(_) => None,
     };
 
-    // Warn early if rootless Podman is missing cgroup delegation.
-    // The authoritative check is in cluster-entrypoint.sh (inside the container),
-    // but catching it here avoids a slow image build/pull cycle before failure.
-    if runtime == ContainerRuntime::Podman {
-        check_rootless_cgroup_delegation();
-    }
-
     Ok(DockerPreflight {
         docker,
         version,
         runtime,
     })
-}
-
-/// Check if the current user's cgroup slice has the controllers k3s needs.
-///
-/// This is a best-effort pre-flight warning for rootless Podman. The
-/// authoritative check runs inside the container entrypoint; this catches
-/// the common case early so users don't wait for image builds to fail.
-fn check_rootless_cgroup_delegation() {
-    // Only relevant on cgroup v2 systems in a user namespace.
-    let uid = match crate::container_runtime::current_uid() {
-        Some(uid) => uid,
-        None => return,
-    };
-    let subtree_path = format!("/sys/fs/cgroup/user.slice/user-{uid}.slice/cgroup.subtree_control");
-
-    let contents = match std::fs::read_to_string(&subtree_path) {
-        Ok(c) => c,
-        Err(_) => return, // Non-standard cgroup layout or not cgroup v2; skip.
-    };
-
-    let required = ["cpuset", "cpu", "memory", "pids"];
-    let missing: Vec<&str> = required
-        .iter()
-        .filter(|ctrl| !contents.split_whitespace().any(|c| c == **ctrl))
-        .copied()
-        .collect();
-
-    if !missing.is_empty() {
-        tracing::warn!(
-            missing = missing.join(", "),
-            "Rootless Podman detected but cgroup controllers are not fully delegated. \
-             The gateway will fail to start. Run the following (one-time setup):\n\n  \
-             sudo mkdir -p /etc/systemd/system/user@.service.d\n  \
-             sudo tee /etc/systemd/system/user@.service.d/delegate.conf <<'EOF'\n  \
-             [Service]\n  \
-             Delegate=cpu cpuset io memory pids\n  \
-             EOF\n  \
-             sudo systemctl daemon-reload\n\n  \
-             Then log out and back in."
-        );
-    }
 }
 
 /// Backward-compatible wrapper that auto-detects the runtime.
@@ -719,11 +676,12 @@ pub async fn ensure_container(
         // Add host gateway aliases for DNS resolution.
         // This allows both the entrypoint script and the running gateway
         // process to reach services on the Docker host.
-        extra_hosts: Some(vec![
-            "host.docker.internal:host-gateway".to_string(),
-            "host.containers.internal:host-gateway".to_string(),
-            "host.openshell.internal:host-gateway".to_string(),
-        ]),
+        extra_hosts: Some(
+            ALL_HOST_GATEWAY_ALIASES
+                .iter()
+                .map(|alias| format!("{alias}:host-gateway"))
+                .collect(),
+        ),
         ..Default::default()
     };
 
@@ -763,8 +721,8 @@ pub async fn ensure_container(
         "--disable=traefik".to_string(),
         "--tls-san=127.0.0.1".to_string(),
         "--tls-san=localhost".to_string(),
-        "--tls-san=host.docker.internal".to_string(),
-        "--tls-san=host.containers.internal".to_string(),
+        format!("--tls-san={DOCKER_HOST_GATEWAY_ALIAS}"),
+        format!("--tls-san={PODMAN_HOST_GATEWAY_ALIAS}"),
     ];
     for san in extra_sans {
         cmd.push(format!("--tls-san={san}"));
@@ -887,7 +845,7 @@ pub async fn ensure_container(
             "/usr/local/bin/cluster-healthcheck.sh".to_string(),
         ]),
         interval: Some(HEALTH_CHECK_INTERVAL_NS),
-        timeout: Some(HEALTH_CHECK_INTERVAL_NS),
+        timeout: Some(HEALTH_CHECK_TIMEOUT_NS),
         start_period: Some(HEALTH_CHECK_START_PERIOD_NS),
         retries: Some(60),
         ..Default::default()
