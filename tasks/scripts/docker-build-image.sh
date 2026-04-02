@@ -197,6 +197,21 @@ if [[ "${CONTAINER_RUNTIME}" == "podman" ]]; then
 	# defaults to HTTPS and will fail. Pass --tls-verify=false in that case.
 	podman_local_tls_args "${IMAGE_NAME:-}"
 	TLS_ARGS=(${PODMAN_TLS_ARGS[@]+"${PODMAN_TLS_ARGS[@]}"})
+
+	# Podman doesn't auto-inject TARGETARCH/BUILDARCH like Docker buildx.
+	# Detect host architecture and add as build args if not already present.
+	ARCH_ARGS=()
+	if ! printf '%s\n' "$@" | grep -q -- '--build-arg.*TARGETARCH'; then
+		HOST_ARCH=$(uname -m)
+		case "${HOST_ARCH}" in
+			x86_64) TARGETARCH="amd64" ;;
+			aarch64|arm64) TARGETARCH="arm64" ;;
+			*) TARGETARCH="${HOST_ARCH}" ;;
+		esac
+		ARCH_ARGS+=(--build-arg "TARGETARCH=${TARGETARCH}")
+		ARCH_ARGS+=(--build-arg "BUILDARCH=${TARGETARCH}")
+	fi
+
 	# Filter OUTPUT_ARGS: Podman stores images locally by default (no --load)
 	PODMAN_OUTPUT_ARGS=()
 	for arg in ${OUTPUT_ARGS[@]+"${OUTPUT_ARGS[@]}"}; do
@@ -208,6 +223,7 @@ if [[ "${CONTAINER_RUNTIME}" == "podman" ]]; then
 	podman build \
 		--layers \
 		"${COMMON_BUILD_ARGS[@]}" \
+		${ARCH_ARGS[@]+"${ARCH_ARGS[@]}"} \
 		${TLS_ARGS[@]+"${TLS_ARGS[@]}"} \
 		${PODMAN_OUTPUT_ARGS[@]+"${PODMAN_OUTPUT_ARGS[@]}"} \
 		.
