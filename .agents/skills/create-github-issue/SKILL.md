@@ -42,7 +42,7 @@ What was found? What was tried?>
 ## Environment
 
 - OS: <os>
-- Docker: <version>
+- Container runtime: Docker <version> / Podman <version>
 - OpenShell: <version>
 
 ## Logs

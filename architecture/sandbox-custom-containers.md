@@ -32,8 +32,8 @@ The community registry prefix defaults to `ghcr.io/nvidia/openshell-community/sa
 
 When `--from` points to a Dockerfile or directory, the CLI:
 
-1. Builds the image locally via the Docker daemon (respecting `.dockerignore`).
-2. Pushes it into the cluster's containerd runtime using `docker save` / `ctr import`.
+1. Builds the image locally via Docker or Podman (respecting `.dockerignore`).
+2. Pushes it into the cluster's containerd runtime using `docker save` / `podman save` and `ctr import`.
 3. Creates the sandbox with the resulting image tag.
 
 ## How It Works
@@ -44,7 +44,7 @@ The supervisor binary (`openshell-sandbox`) is **always side-loaded** from the k
 flowchart TB
     subgraph node["K3s Node"]
         bin["/opt/openshell/bin/openshell-sandbox
-        (built into cluster image, updatable via docker cp)"]
+        (built into cluster image, updatable via docker/podman cp)"]
     end
 
     node -- "hostPath (readOnly)" --> agent
@@ -113,7 +113,7 @@ The `openshell-sandbox` supervisor adapts to arbitrary environments:
 | Command override | Ensures `openshell-sandbox` is the entrypoint regardless of the image's default CMD |
 | Clear `run_as_user/group` for custom images | Prevents startup failure when the image lacks the default `sandbox` user |
 | Non-fatal log file init | `/var/log/openshell.log` may be unwritable in arbitrary images; falls back to stdout |
-| `docker save` / `ctr import` for push | Avoids requiring a registry for local dev; images land directly in the k3s containerd store |
+| `docker/podman save` + `ctr import` for push | Avoids requiring a registry for local dev; images land directly in the k3s containerd store |
 | Optional `iptables` for bypass detection | Core network isolation works via routing alone (`iproute2`); `iptables` only adds fast-fail (`ECONNREFUSED`) and diagnostic LOG entries. Making it optional avoids hard failures in minimal images that lack `iptables` while giving better UX when it is available. |
 
 ## Limitations

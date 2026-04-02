@@ -48,7 +48,7 @@ The incremental deploy (`cluster-deploy-fast.sh`) fingerprints local Git changes
 
 When no local changes are detected, the command is a no-op.
 
-**Gateway updates** are pushed to a local registry and the StatefulSet is restarted. **Supervisor updates** are copied directly into the running cluster container via `docker cp` — new sandbox pods pick up the updated binary immediately through the hostPath mount, with no image rebuild or cluster restart required.
+**Gateway updates** are pushed to a local registry and the StatefulSet is restarted. **Supervisor updates** are copied directly into the running cluster container via `docker cp` (or `podman cp`) — new sandbox pods pick up the updated binary immediately through the hostPath mount, with no image rebuild or cluster restart required.
 
 Fingerprints are stored in `.cache/cluster-deploy-fast.state`. You can also target specific components explicitly:
 

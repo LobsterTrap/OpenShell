@@ -7,7 +7,7 @@ your local machine through port forwarding.
 ## Prerequisites
 
 - A running OpenShell gateway (`openshell gateway start`)
-- Docker daemon running
+- Docker or Podman running
 
 ## What's in this example
 

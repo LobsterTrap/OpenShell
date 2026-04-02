@@ -36,11 +36,11 @@ A gateway provisions sandboxes, brokers CLI requests, enforces policies, and man
 
 | Type | Where It Runs | Best For |
 |---|---|---|
-| **Local** | Docker on your workstation | Solo development and quick iteration. The CLI auto-bootstraps a local gateway if none exists. |
-| **Remote** | Docker on a remote host via SSH | Running sandboxes on a more powerful machine (for example, a DGX Spark) while keeping the CLI on your laptop. |
+| **Local** | Docker or Podman on your workstation | Solo development and quick iteration. The CLI auto-bootstraps a local gateway if none exists. |
+| **Remote** | Docker or Podman on a remote host via SSH | Running sandboxes on a more powerful machine (for example, a DGX Spark) while keeping the CLI on your laptop. |
 | **Cloud** | Behind a reverse proxy (for example, Cloudflare Access) | Individual users accessing OpenShell behind a cloud VM. Cloud gateways are not yet intended for shared team access. |
 
-All three types expose the same API surface. Sandboxes, policies, and providers work identically regardless of where the gateway runs. The only difference is how the CLI reaches the gateway, whether through a direct Docker socket, SSH tunnel, or HTTPS through a proxy.
+All three types expose the same API surface. Sandboxes, policies, and providers work identically regardless of where the gateway runs. The only difference is how the CLI reaches the gateway, whether through a direct container runtime socket, SSH tunnel, or HTTPS through a proxy.
 
 :::{tip}
 You do not need to deploy a gateway manually. Running `openshell sandbox create` without a gateway auto-bootstraps a local one for you.

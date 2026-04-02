@@ -28,12 +28,12 @@ openshell doctor exec -- sh           # interactive shell
 
 ## Overview
 
-`openshell gateway start` creates a Docker container running k3s with the OpenShell server deployed via Helm. The deployment stages, in order, are:
+`openshell gateway start` creates a container (Docker or Podman) running k3s with the OpenShell server deployed via Helm. The deployment stages, in order, are:
 
 1. **Pre-deploy check**: `openshell gateway start` in interactive mode prompts to **reuse** (keep volume, clean stale nodes) or **recreate** (destroy everything, fresh start). `mise run cluster` always recreates before deploy.
 2. Ensure cluster image is available (local build or remote pull)
-3. Create Docker network (`openshell-cluster`) and volume (`openshell-cluster-{name}`)
-4. Create and start a privileged Docker container (`openshell-cluster-{name}`)
+3. Create container network (`openshell-cluster`) and volume (`openshell-cluster-{name}`)
+4. Create and start a privileged container (`openshell-cluster-{name}`)
 5. Wait for k3s to generate kubeconfig (up to 60s)
 6. **Clean stale nodes**: Remove any `NotReady` k3s nodes left over from previous container instances that reused the same persistent volume
 7. **Prepare local images** (if `OPENSHELL_PUSH_IMAGES` is set): In `internal` registry mode, bootstrap waits for the in-cluster registry and pushes tagged images there. In `external` mode, bootstrap uses legacy `ctr -n k8s.io images import` push-mode behavior.
@@ -44,10 +44,10 @@ openshell doctor exec -- sh           # interactive shell
     - `openshell` statefulset ready in `openshell` namespace
     - TLS secrets `openshell-server-tls` and `openshell-client-tls` exist in `openshell` namespace
 
-For local deploys, metadata endpoint selection depends on Docker connectivity:
+For local deploys, metadata endpoint selection depends on container runtime connectivity:
 
-- default local Docker socket (`unix:///var/run/docker.sock`): `https://127.0.0.1:{port}` (default port 8080)
-- TCP Docker daemon (`DOCKER_HOST=tcp://<host>:<port>`): `https://<host>:{port}` for non-loopback hosts
+- default local Docker socket (`unix:///var/run/docker.sock`), or Podman sockets (`$XDG_RUNTIME_DIR/podman/podman.sock` for rootless, `/run/podman/podman.sock` for rootful): `https://127.0.0.1:{port}` (default port 8080)
+- TCP Docker daemon (`DOCKER_HOST=tcp://<host>:<port>`) or Podman (`CONTAINER_HOST=tcp://<host>:<port>`): `https://<host>:{port}` for non-loopback hosts
 
 The host port is configurable via `--port` on `openshell gateway start` (default 8080) and is stored in `ClusterMetadata.gateway_port`.
 
@@ -292,9 +292,9 @@ If DNS is broken, all image pulls from the distribution registry will fail, as w
 | Helm install job failed | Chart values error or dependency issue | `openshell doctor exec -- kubectl -n kube-system logs -l job-name=helm-install-openshell` |
 | Architecture mismatch (remote) | Built on arm64, deploying to amd64 | Cross-build the image for the target architecture |
 | Port conflict | Another service on the configured gateway host port (default 8080) | Stop conflicting service or use `--port` on `openshell gateway start` to pick a different host port |
-| gRPC connect refused to `127.0.0.1:443` in CI | Docker daemon is remote (`DOCKER_HOST=tcp://...`) but metadata still points to loopback | Verify metadata endpoint host matches `DOCKER_HOST` and includes non-loopback host |
+| gRPC connect refused to `127.0.0.1:443` in CI | Docker/Podman daemon is remote (`DOCKER_HOST=tcp://...` or `CONTAINER_HOST=tcp://...`) but metadata still points to loopback | Verify metadata endpoint host matches `DOCKER_HOST`/`CONTAINER_HOST` and includes non-loopback host |
 | DNS failures inside container | Entrypoint DNS detection failed | `openshell doctor exec -- cat /etc/rancher/k3s/resolv.conf` and `openshell doctor logs --lines 20` |
-| Node DiskPressure / MemoryPressure / PIDPressure | Insufficient disk, memory, or PIDs on host | Free disk (`docker system prune -a --volumes`), increase memory, or expand host resources |
+| Node DiskPressure / MemoryPressure / PIDPressure | Insufficient disk, memory, or PIDs on host | Free disk (`docker system prune -a --volumes` or `podman system prune -a --volumes`), increase memory, or expand host resources |
 | Pods evicted with "The node had condition: [DiskPressure]" | Host disk full, kubelet evicting pods | Free disk space on host, then `openshell gateway destroy <name> && openshell gateway start` |
 | `metrics-server` errors in logs | Normal k3s noise, not the root cause | These errors are benign — look for the actual failing health check component |
 | Stale NotReady nodes from previous deploys | Volume reused across container recreations | Deploy flow auto-cleans stale nodes; if it still fails, manually delete NotReady nodes or choose "Recreate" when prompted |

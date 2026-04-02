@@ -6,7 +6,7 @@ deployments.
 
 ## Prerequisites
 
-- Docker daemon running
+- Docker or Podman running
 - OpenShell CLI installed (`openshell`)
 
 ## Local deployment
@@ -17,7 +17,7 @@ deployments.
 openshell gateway start
 ```
 
-This provisions a single-node k3s cluster inside a Docker container,
+This provisions a single-node k3s cluster inside a container (Docker or Podman),
 deploys the gateway workload, generates mTLS certificates, and stores
 connection artifacts locally. The gateway becomes reachable at
 `https://127.0.0.1:8080` by default.
@@ -52,7 +52,7 @@ openshell gateway destroy
 ## Remote deployment
 
 Deploy the gateway on a remote machine accessible via SSH. The only
-dependency on the remote host is Docker.
+dependency on the remote host is Docker or Podman.
 
 ### 1. Deploy
 
@@ -60,7 +60,7 @@ dependency on the remote host is Docker.
 openshell gateway start --remote user@hostname
 ```
 
-The CLI creates an SSH-based Docker client, pulls the cluster image on
+The CLI creates an SSH-based container client, pulls the cluster image on
 the remote host, and provisions the cluster there. The gateway is
 reachable at `https://<hostname>:8080`.
 
@@ -185,7 +185,9 @@ openshell gateway info
 If the gateway is unreachable, inspect the container:
 
 ```bash
-docker logs openshell-cluster-openshell
+openshell doctor logs
+# or: docker logs openshell-cluster-openshell
+# or: podman logs openshell-cluster-openshell
 ```
 
 Re-running `gateway start` is idempotent -- it reuses existing

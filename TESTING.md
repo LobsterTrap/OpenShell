@@ -138,7 +138,7 @@ lifecycle management, output parsing, and cleanup.
 
 Tests:
 
-- `tests/custom_image.rs` — custom Docker image build and sandbox run
+- `tests/custom_image.rs` — custom container image build and sandbox run
 - `tests/sync.rs` — bidirectional file sync round-trip (including large files)
 - `tests/port_forward.rs` — TCP port forwarding through a sandbox
 
