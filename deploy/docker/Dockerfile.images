@@ -33,6 +33,10 @@ ARG SCCACHE_MEMCACHED_ENDPOINT
 # so cargo uses the Cargo.toml default (parallel codegen for fast linking).
 ARG CARGO_CODEGEN_UNITS
 
+# Make build args available as environment variables
+ENV TARGETARCH=$TARGETARCH \
+    BUILDARCH=$BUILDARCH
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     cmake g++ make protobuf-compiler curl && rm -rf /var/lib/apt/lists/*
 
