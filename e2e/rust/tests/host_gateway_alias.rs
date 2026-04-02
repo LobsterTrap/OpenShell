@@ -11,6 +11,7 @@ use std::time::Duration;
 
 use openshell_e2e::harness::binary::openshell_cmd;
 use openshell_e2e::harness::port::find_free_port;
+use openshell_e2e::harness::runtime::container_runtime_binary;
 use openshell_e2e::harness::sandbox::SandboxGuard;
 use tempfile::NamedTempFile;
 use tokio::time::{interval, timeout};
@@ -81,7 +82,7 @@ class Handler(BaseHTTPRequestHandler):
 HTTPServer(("0.0.0.0", 8000), Handler).serve_forever()
 "#;
 
-        let output = Command::new("docker")
+        let output = Command::new(container_runtime_binary())
             .args([
                 "run",
                 "--detach",
@@ -96,14 +97,15 @@ HTTPServer(("0.0.0.0", 8000), Handler).serve_forever()
                 script,
             ])
             .output()
-            .map_err(|e| format!("start docker test server: {e}"))?;
+            .map_err(|e| format!("start container test server: {e}"))?;
 
         let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
         if !output.status.success() {
             return Err(format!(
-                "docker run failed (exit {:?}):\n{stderr}",
+                "{} run failed (exit {:?}):\n{stderr}",
+                container_runtime_binary(),
                 output.status.code()
             ));
         }
@@ -122,7 +124,7 @@ HTTPServer(("0.0.0.0", 8000), Handler).serve_forever()
             let mut tick = interval(Duration::from_millis(500));
             loop {
                 tick.tick().await;
-                let output = Command::new("docker")
+                let output = Command::new(container_runtime_binary())
                     .args([
                         "exec",
                         &container_id,
@@ -141,7 +143,7 @@ HTTPServer(("0.0.0.0", 8000), Handler).serve_forever()
         .await
         .map_err(|_| {
             format!(
-                "docker test server {} did not become ready within 60s",
+                "container test server {} did not become ready within 60s",
                 self.container_id
             )
         })?
@@ -150,7 +152,7 @@ HTTPServer(("0.0.0.0", 8000), Handler).serve_forever()
 
 impl Drop for DockerServer {
     fn drop(&mut self) {
-        let _ = Command::new("docker")
+        let _ = Command::new(container_runtime_binary())
             .args(["rm", "-f", &self.container_id])
             .stdout(Stdio::null())
             .stderr(Stdio::null())

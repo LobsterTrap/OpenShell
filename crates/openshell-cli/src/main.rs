@@ -339,6 +339,16 @@ struct Cli {
     )]
     gateway_endpoint: Option<String>,
 
+    /// Container runtime to use (docker or podman).
+    /// Auto-detected when not specified, preferring podman.
+    #[arg(
+        long,
+        global = true,
+        env = "OPENSHELL_CONTAINER_RUNTIME",
+        help_heading = "GLOBAL FLAGS"
+    )]
+    container_runtime: Option<String>,
+
     /// Increase verbosity (-v, -vv, -vvv).
     #[arg(short, long, action = clap::ArgAction::Count, global = true, help_heading = "GLOBAL FLAGS")]
     verbose: u8,
@@ -1595,6 +1605,7 @@ async fn main() -> Result<()> {
                     registry_username.as_deref(),
                     registry_token.as_deref(),
                     gpu,
+                    cli.container_runtime.as_deref(),
                 )
                 .await?;
             }
@@ -1684,13 +1695,19 @@ async fn main() -> Result<()> {
                 let name = name
                     .or_else(|| resolve_gateway_name(&cli.gateway))
                     .unwrap_or_else(|| "openshell".to_string());
-                run::doctor_exec(&name, remote.as_deref(), ssh_key.as_deref(), &command)?;
+                run::doctor_exec(
+                    &name,
+                    remote.as_deref(),
+                    ssh_key.as_deref(),
+                    &command,
+                    cli.container_runtime.as_deref(),
+                )?;
             }
             DoctorCommands::LlmTxt => {
                 run::doctor_llm()?;
             }
             DoctorCommands::Check => {
-                run::doctor_check().await?;
+                run::doctor_check(cli.container_runtime.as_deref()).await?;
             }
         },
         Some(Commands::Doctor { command: None }) => {
@@ -2569,6 +2586,7 @@ mod tests {
             auth_mode: Some("cloudflare_jwt".to_string()),
             edge_team_domain: None,
             edge_auth_url: None,
+            container_runtime: openshell_bootstrap::ContainerRuntime::Docker,
         }
     }
 

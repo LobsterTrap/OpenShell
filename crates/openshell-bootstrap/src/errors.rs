@@ -436,16 +436,20 @@ fn diagnose_cdi_specs_missing(_gateway_name: &str) -> GatewayFailureDiagnosis {
 
 fn diagnose_docker_not_running(_gateway_name: &str) -> GatewayFailureDiagnosis {
     GatewayFailureDiagnosis {
-        summary: "Docker is not running".to_string(),
-        explanation: "The Docker daemon is not running or not accessible. OpenShell requires \
-            a Docker-compatible container runtime to manage gateway clusters."
+        summary: "Container runtime is not running".to_string(),
+        explanation: "The container runtime daemon (Docker or Podman) is not running or not \
+            accessible. OpenShell requires a container runtime to manage gateway clusters."
             .to_string(),
         recovery_steps: vec![
-            RecoveryStep::new("Start your Docker runtime"),
-            RecoveryStep::with_command("Verify Docker is accessible", "docker info"),
+            RecoveryStep::new("Start your container runtime (Docker or Podman)"),
+            RecoveryStep::with_command(
+                "Verify the runtime is accessible",
+                "docker info  # or: podman info",
+            ),
             RecoveryStep::new(
-                "If using a non-default Docker socket, set DOCKER_HOST:\n     \
-                 export DOCKER_HOST=unix:///var/run/docker.sock",
+                "If using a non-default socket, set the appropriate env var:\n     \
+                 export DOCKER_HOST=unix:///var/run/docker.sock\n     \
+                 export CONTAINER_HOST=unix:///run/podman/podman.sock",
             ),
             RecoveryStep::new("Then retry: openshell gateway start"),
         ],
@@ -701,7 +705,11 @@ mod tests {
         let diagnosis = diagnose_failure("test", "Cannot connect to the Docker daemon", None);
         assert!(diagnosis.is_some());
         let d = diagnosis.unwrap();
-        assert!(d.summary.contains("Docker"));
+        assert!(
+            d.summary.contains("runtime"),
+            "summary should mention container runtime: {}",
+            d.summary
+        );
         assert!(d.retryable);
     }
 
@@ -710,7 +718,11 @@ mod tests {
         let diagnosis = diagnose_failure("test", "Socket not found: /var/run/docker.sock", None);
         assert!(diagnosis.is_some());
         let d = diagnosis.unwrap();
-        assert!(d.summary.contains("Docker"));
+        assert!(
+            d.summary.contains("runtime"),
+            "summary should mention container runtime: {}",
+            d.summary
+        );
         assert!(d.retryable);
     }
 
@@ -719,7 +731,11 @@ mod tests {
         let diagnosis = diagnose_failure("test", "No such file or directory (os error 2)", None);
         assert!(diagnosis.is_some());
         let d = diagnosis.unwrap();
-        assert!(d.summary.contains("Docker"));
+        assert!(
+            d.summary.contains("runtime"),
+            "summary should mention container runtime: {}",
+            d.summary
+        );
     }
 
     #[test]
@@ -731,7 +747,11 @@ mod tests {
         );
         assert!(diagnosis.is_some());
         let d = diagnosis.unwrap();
-        assert!(d.summary.contains("Docker"));
+        assert!(
+            d.summary.contains("runtime"),
+            "summary should mention container runtime: {}",
+            d.summary
+        );
         assert!(d.retryable);
     }
 

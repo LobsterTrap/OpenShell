@@ -56,7 +56,7 @@ openshell-ca  (Self-signed Root CA, O=openshell, CN=openshell-ca)
 ├── openshell-server  (Leaf cert, CN=openshell-server)
 │   SANs: openshell, openshell.openshell.svc,
 │          openshell.openshell.svc.cluster.local,
-│          localhost, host.docker.internal, 127.0.0.1
+│          localhost, host.docker.internal, host.containers.internal, 127.0.0.1
 │          + extra SANs for remote deployments
 │
 └── openshell-client  (Leaf cert, CN=openshell-client)
@@ -132,7 +132,7 @@ Files are written atomically using a temp-dir -> validate -> rename strategy wit
 
 PKI provisioning occurs during `deploy_cluster_with_logs()` (`crates/openshell-bootstrap/src/lib.rs:284`). The full sequence:
 
-1. **Cluster container launched** -- a k3s container is created via Docker with a persistent volume.
+1. **Cluster container launched** -- a k3s container is created via Docker or Podman with a persistent volume.
 2. **k3s readiness** -- the bootstrap waits for k3s to become ready inside the container.
 3. **Extra SANs computed** -- for remote deployments, the SSH destination hostname and its resolved IP are added to the server certificate's SANs. For local deployments, the detected gateway host (if any) is added.
 4. **`reconcile_pki()` called** (`crates/openshell-bootstrap/src/lib.rs:515`):
@@ -146,10 +146,10 @@ PKI provisioning occurs during `deploy_cluster_with_logs()` (`crates/openshell-b
 ```mermaid
 sequenceDiagram
     participant CLI as nav deploy
-    participant Docker as Cluster Container
+    participant Runtime as Cluster Container
     participant K8s as k3s / K8s API
 
-    CLI->>Docker: Create container, wait for k3s
+    CLI->>Runtime: Create container, wait for k3s
     CLI->>K8s: Wait for openshell namespace
     CLI->>K8s: Read existing TLS secrets
     alt Secrets valid
@@ -290,13 +290,13 @@ Traffic flows through several layers from the host to the gateway process:
 
 | Layer | Port | Configurable Via |
 |---|---|---|
-| Host (Docker) | `8080` (default) | `--port` flag on `nav deploy` |
+| Host (Docker/Podman) | `8080` (default) | `--port` flag on `nav deploy` |
 | Container | `30051` | Hardcoded in `crates/openshell-bootstrap/src/docker.rs` |
 | k3s NodePort | `30051` | `deploy/helm/openshell/values.yaml` (`service.nodePort`) |
 | k3s Service | `8080` | `deploy/helm/openshell/values.yaml` (`service.port`) |
 | Server bind | `8080` | `--port` flag / `OPENSHELL_SERVER_PORT` env var |
 
-Docker maps `host_port → 30051/tcp`. Inside k3s, the NodePort service maps `30051 → 8080 (pod port)`. The server binds `0.0.0.0:8080`.
+The container runtime maps `host_port → 30051/tcp`. Inside k3s, the NodePort service maps `30051 → 8080 (pod port)`. The server binds `0.0.0.0:8080`.
 
 ## Security Model Summary
 
@@ -432,7 +432,7 @@ This capability is orthogonal to gateway mTLS -- it operates only on sandbox-to-
 ## Cross-References
 
 - [Gateway Architecture](gateway.md) -- protocol multiplexing, gRPC services, persistence, and SSH tunneling
-- [Cluster Bootstrap](cluster-single-node.md) -- cluster provisioning, Docker container lifecycle, and credential management
+- [Cluster Bootstrap](cluster-single-node.md) -- cluster provisioning, container lifecycle, and credential management
 - [Sandbox Architecture](sandbox.md) -- sandbox-side isolation, proxy, and policy enforcement
 - [Sandbox Connect](sandbox-connect.md) -- client-side SSH connection flow through the gateway
 - [Policy Language](security-policy.md) -- YAML/Rego policy system including L7 TLS inspection configuration

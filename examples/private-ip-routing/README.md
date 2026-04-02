@@ -27,14 +27,14 @@ cluster_pods:
 
 ## Launch the demo server
 
-Build the image and push it to the local cluster registry:
+Build the image and push it to the local cluster registry (replace `docker` with `podman` if using Podman):
 
 ```bash
 docker build -t 127.0.0.1:5000/demo/private-api:latest examples/private-ip-routing/
 docker push 127.0.0.1:5000/demo/private-api:latest
 ```
 
-Deploy the pod:
+Deploy the pod (or use `openshell doctor exec -- kubectl ...`):
 
 ```bash
 docker exec openshell-cluster-openshell \

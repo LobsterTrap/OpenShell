@@ -38,7 +38,7 @@ After completing this tutorial, you understand:
 ## Prerequisites
 
 - A working OpenShell installation. Complete the {doc}`/get-started/quickstart` before proceeding.
-- Docker Desktop running on your machine.
+- Docker Desktop or Podman running on your machine.
 
 :::{tip}
 To run every step of this tutorial, you can also use the automated demo script at the [examples/sandbox-policy-quickstart](https://github.com/NVIDIA/OpenShell/blob/main/examples/sandbox-policy-quickstart) directory in the NVIDIA OpenShell repository. It runs the full walkthrough in under a minute but without any user interaction.

@@ -24,7 +24,8 @@ The following software must be installed on the host before using the OpenShell 
 
 | Component                       | Minimum Version | Notes                                           |
 | ------------------------------- | --------------- | ----------------------------------------------- |
-| Docker Desktop or Docker Engine | 28.04           | Must be running before any `openshell` command. |
+| Docker Desktop or Docker Engine | 28.04           | Must be running before any `openshell` command. Either Docker or Podman is required. |
+| Podman                          | 4.0             | Supported on Linux. Preferred when both Docker and Podman are available. Rootless Podman requires one-time cgroup delegation setup. |
 
 ## Sandbox Runtime Versions
 

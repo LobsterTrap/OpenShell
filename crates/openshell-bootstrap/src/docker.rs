@@ -3,14 +3,19 @@
 
 use crate::RemoteOptions;
 use crate::constants::{container_name, network_name, volume_name};
+use crate::container_runtime::{
+    ALL_HOST_GATEWAY_ALIASES, ContainerRuntime, DOCKER_HOST_GATEWAY_ALIAS,
+    PODMAN_HOST_GATEWAY_ALIAS, find_all_sockets,
+};
 use crate::image::{self, DEFAULT_IMAGE_REPO_BASE, DEFAULT_REGISTRY, parse_image_ref};
 use bollard::API_DEFAULT_VERSION;
 use bollard::Docker;
 use bollard::errors::Error as BollardError;
 use bollard::models::{
-    ContainerCreateBody, DeviceRequest, EndpointSettings, HostConfig, HostConfigCgroupnsModeEnum,
-    NetworkConnectRequest, NetworkCreateRequest, NetworkDisconnectRequest, PortBinding,
-    RestartPolicy, RestartPolicyNameEnum, VolumeCreateRequest,
+    ContainerCreateBody, DeviceRequest, EndpointSettings, HealthConfig, HostConfig,
+    HostConfigCgroupnsModeEnum, NetworkConnectRequest, NetworkCreateRequest,
+    NetworkDisconnectRequest, PortBinding, RestartPolicy, RestartPolicyNameEnum,
+    VolumeCreateRequest,
 };
 use bollard::query_parameters::{
     CreateContainerOptions, CreateImageOptions, InspectContainerOptions, InspectNetworkOptions,
@@ -23,20 +28,36 @@ use std::collections::HashMap;
 
 const REGISTRY_NAMESPACE_DEFAULT: &str = "openshell";
 
+/// Health check interval in nanoseconds (5 seconds).
+const HEALTH_CHECK_INTERVAL_NS: i64 = 5 * 1_000_000_000;
+/// Health check timeout in nanoseconds (5 seconds).
+const HEALTH_CHECK_TIMEOUT_NS: i64 = 5 * 1_000_000_000;
+/// Health check start period in nanoseconds (20 seconds).
+const HEALTH_CHECK_START_PERIOD_NS: i64 = 20 * 1_000_000_000;
+
 /// Resolve the raw GPU device-ID list, replacing the `"auto"` sentinel with a
-/// concrete device ID based on whether CDI is enabled on the daemon.
+/// concrete device ID based on whether CDI is enabled on the daemon and which
+/// container runtime is in use.
 ///
 /// | Input        | Output                                                       |
 /// |--------------|--------------------------------------------------------------|
 /// | `[]`         | `[]`  — no GPU                                               |
 /// | `["legacy"]` | `["legacy"]`  — pass through to the non-CDI fallback path    |
-/// | `["auto"]`   | `["nvidia.com/gpu=all"]` if CDI enabled, else `["legacy"]`   |
+/// | `["auto"]`   | `["nvidia.com/gpu=all"]` if CDI enabled or Podman, else `["legacy"]` |
 /// | `[cdi-ids…]` | unchanged                                                    |
-pub(crate) fn resolve_gpu_device_ids(gpu: &[String], cdi_enabled: bool) -> Vec<String> {
+///
+/// Podman always uses CDI for GPU passthrough — the legacy NVIDIA container
+/// runtime path (`driver="nvidia"`, `count=-1`) is Docker-only.
+pub(crate) fn resolve_gpu_device_ids(
+    gpu: &[String],
+    cdi_enabled: bool,
+    runtime: ContainerRuntime,
+) -> Vec<String> {
     match gpu {
         [] => vec![],
         [v] if v == "auto" => {
-            if cdi_enabled {
+            if cdi_enabled || runtime == ContainerRuntime::Podman {
+                // Podman always uses CDI; Docker uses CDI when enabled
                 vec!["nvidia.com/gpu=all".to_string()]
             } else {
                 vec!["legacy".to_string()]
@@ -80,20 +101,20 @@ impl HostPlatform {
     }
 }
 
-/// Query the Docker daemon for the host platform (architecture and OS).
+/// Query the container runtime daemon for the host platform (architecture and OS).
 pub async fn get_host_platform(docker: &Docker) -> Result<HostPlatform> {
     let version = docker
         .version()
         .await
         .into_diagnostic()
-        .wrap_err("failed to query Docker daemon version")?;
+        .wrap_err("failed to query container runtime daemon version")?;
 
     let arch = version
         .arch
-        .ok_or_else(|| miette::miette!("Docker daemon did not report architecture"))?;
+        .ok_or_else(|| miette::miette!("container runtime daemon did not report architecture"))?;
     let os = version
         .os
-        .ok_or_else(|| miette::miette!("Docker daemon did not report OS"))?;
+        .ok_or_else(|| miette::miette!("container runtime daemon did not report OS"))?;
 
     Ok(HostPlatform {
         arch: normalize_arch(&arch),
@@ -113,151 +134,202 @@ pub fn normalize_arch(arch: &str) -> String {
     }
 }
 
-/// Result of a successful Docker preflight check.
+/// Result of a successful container runtime preflight check.
 ///
-/// Contains the validated Docker client and metadata about the daemon so
+/// Contains the validated client and metadata about the daemon so
 /// callers can reuse the connection without re-checking.
 #[derive(Debug)]
 pub struct DockerPreflight {
-    /// A Docker client that has been verified as connected and responsive.
+    /// A client that has been verified as connected and responsive.
+    /// Named `docker` because bollard's client type is `Docker` regardless of
+    /// the underlying runtime (Podman exposes a Docker-compatible API).
     pub docker: Docker,
-    /// Docker daemon version string (e.g., "28.1.1").
+    /// Daemon version string (e.g., "28.1.1" for Docker, "5.3.1" for Podman).
     pub version: Option<String>,
+    /// Which container runtime this client is connected to.
+    pub runtime: ContainerRuntime,
 }
 
-/// Well-known Docker socket paths to probe when the default fails.
-///
-/// These cover common container runtimes on macOS and Linux:
-/// - `/var/run/docker.sock` — default for Docker Desktop, `OrbStack`, Colima
-/// - `$HOME/.colima/docker.sock` — Colima (older installs)
-/// - `$HOME/.orbstack/run/docker.sock` — `OrbStack` (if symlink is missing)
-const WELL_KNOWN_SOCKET_PATHS: &[&str] = &[
-    "/var/run/docker.sock",
-    // Expanded at runtime via home_dir():
-    // ~/.colima/docker.sock
-    // ~/.orbstack/run/docker.sock
-];
-
-/// Check that a Docker-compatible runtime is installed, running, and reachable.
+/// Check that a container runtime is installed, running, and reachable.
 ///
 /// This is the primary preflight gate. It must be called before any gateway
 /// deploy work begins. On failure it produces a user-friendly error with
 /// actionable recovery steps instead of a raw bollard connection error.
-pub async fn check_docker_available() -> Result<DockerPreflight> {
-    // Step 1: Try to connect using bollard's default resolution
-    // (respects DOCKER_HOST, then falls back to /var/run/docker.sock).
-    let docker = match Docker::connect_with_local_defaults() {
-        Ok(d) => d,
-        Err(err) => {
-            return Err(docker_not_reachable_error(
-                &format!("{err}"),
-                "Failed to create Docker client",
-            ));
-        }
-    };
+///
+/// When `runtime` is `Podman`, connects to the Podman socket (which exposes
+/// a Docker-compatible API that bollard can use directly).
+pub async fn check_runtime_available(runtime: ContainerRuntime) -> Result<DockerPreflight> {
+    let docker = connect_local(runtime)?;
 
-    // Step 2: Ping the daemon to confirm it's responsive.
+    // Ping the daemon to confirm it's responsive.
     if let Err(err) = docker.ping().await {
-        return Err(docker_not_reachable_error(
+        return Err(runtime_not_reachable_error(
+            runtime,
             &format!("{err}"),
-            "Docker socket exists but the daemon is not responding",
+            &format!(
+                "{} socket exists but the daemon is not responding",
+                runtime.display_name()
+            ),
         ));
     }
 
-    // Step 3: Query version info (best-effort — don't fail on this).
+    // Query version info (best-effort — don't fail on this).
     let version = match docker.version().await {
         Ok(v) => v.version,
         Err(_) => None,
     };
 
-    Ok(DockerPreflight { docker, version })
+    Ok(DockerPreflight {
+        docker,
+        version,
+        runtime,
+    })
 }
 
-/// Build a rich, user-friendly error when Docker is not reachable.
-fn docker_not_reachable_error(raw_err: &str, summary: &str) -> miette::Report {
-    let docker_host = std::env::var("DOCKER_HOST").ok();
-    let socket_exists = std::path::Path::new("/var/run/docker.sock").exists();
+/// Backward-compatible wrapper that auto-detects the runtime.
+///
+/// Prefers Podman when both runtimes are available.
+pub async fn check_docker_available() -> Result<DockerPreflight> {
+    let runtime = crate::container_runtime::detect_runtime(None)?;
+    check_runtime_available(runtime).await
+}
+
+/// Create a bollard client connected to the local daemon for the given runtime.
+pub(crate) fn connect_local(runtime: ContainerRuntime) -> Result<Docker> {
+    match runtime {
+        ContainerRuntime::Docker => Docker::connect_with_local_defaults().map_err(|err| {
+            runtime_not_reachable_error(
+                runtime,
+                &format!("{err}"),
+                "Failed to create Docker client",
+            )
+        }),
+        ContainerRuntime::Podman => {
+            // Podman exposes a Docker-compatible API on its socket.
+            // Try CONTAINER_HOST env var first, then DOCKER_HOST (Podman
+            // respects it for compat), then probe well-known socket paths.
+            if let Ok(host) = std::env::var("CONTAINER_HOST") {
+                if let Some(path) = host.strip_prefix("unix://") {
+                    return Docker::connect_with_socket(path, 120, API_DEFAULT_VERSION).map_err(
+                        |err| {
+                            runtime_not_reachable_error(
+                                runtime,
+                                &format!("{err}"),
+                                &format!("Failed to connect to Podman socket at {path}"),
+                            )
+                        },
+                    );
+                }
+            }
+
+            // Try DOCKER_HOST for backward compat
+            if let Ok(host) = std::env::var("DOCKER_HOST") {
+                if let Some(path) = host.strip_prefix("unix://") {
+                    return Docker::connect_with_socket(path, 120, API_DEFAULT_VERSION).map_err(
+                        |err| {
+                            runtime_not_reachable_error(
+                                runtime,
+                                &format!("{err}"),
+                                &format!("Failed to connect to Podman socket at {path}"),
+                            )
+                        },
+                    );
+                }
+            }
+
+            // Probe Podman sockets
+            let sockets = crate::container_runtime::find_podman_sockets();
+            for socket_path in &sockets {
+                match Docker::connect_with_socket(socket_path, 120, API_DEFAULT_VERSION) {
+                    Ok(client) => return Ok(client),
+                    Err(err) => {
+                        tracing::debug!(
+                            path = socket_path,
+                            error = %err,
+                            "failed to connect to Podman socket, trying next"
+                        );
+                    }
+                }
+            }
+
+            // All Podman-specific socket paths exhausted — return a clear error
+            // instead of falling through to Docker's default socket.
+            Err(runtime_not_reachable_error(
+                runtime,
+                "no Podman socket found at standard locations",
+                "Failed to connect to Podman",
+            ))
+        }
+    }
+}
+
+/// Build a rich, user-friendly error when a container runtime is not reachable.
+fn runtime_not_reachable_error(
+    runtime: ContainerRuntime,
+    raw_err: &str,
+    summary: &str,
+) -> miette::Report {
+    let host_env = runtime.host_env_var();
+    let host_env_val = std::env::var(host_env).ok();
+    // Also check the "other" env var for cross-compat
+    let alt_env_val = match runtime {
+        ContainerRuntime::Docker => std::env::var("CONTAINER_HOST").ok(),
+        ContainerRuntime::Podman => std::env::var("DOCKER_HOST").ok(),
+    };
+    let env_val = host_env_val.or(alt_env_val);
 
     let mut hints: Vec<String> = Vec::new();
 
-    if !socket_exists && docker_host.is_none() {
-        // No socket and no DOCKER_HOST — likely nothing is installed or started
-        hints.push(
-            "No Docker socket found at /var/run/docker.sock and DOCKER_HOST is not set."
-                .to_string(),
-        );
-        hints.push(
-            "Install and start a Docker-compatible runtime. See the support matrix \
-             in the OpenShell docs for tested configurations."
-                .to_string(),
-        );
-
-        // Check for alternative sockets that might exist
-        let alt_sockets = find_alternative_sockets();
-        if !alt_sockets.is_empty() {
+    if env_val.is_none() {
+        // No env var set — check for sockets
+        let alt_sockets = find_all_sockets();
+        if alt_sockets.is_empty() {
             hints.push(format!(
-                "Found Docker-compatible socket(s) at alternative path(s):\n  {}\n\n  \
-                 Set DOCKER_HOST to use one, e.g.:\n\n    \
-                 export DOCKER_HOST=unix://{}",
-                alt_sockets.join("\n  "),
-                alt_sockets[0],
+                "No container runtime socket found and {} is not set.",
+                host_env
+            ));
+            hints.push(format!(
+                "Install and start {}. See the support matrix \
+                 in the OpenShell docs for tested configurations.",
+                runtime.display_name()
+            ));
+        } else {
+            // Found sockets for possibly a different runtime
+            let socket_list: Vec<String> = alt_sockets
+                .iter()
+                .map(|(path, rt)| format!("{path} ({})", rt.display_name()))
+                .collect();
+            hints.push(format!(
+                "Found container runtime socket(s):\n  {}\n\n  \
+                 Set {} to use one, e.g.:\n\n    \
+                 export {}=unix://{}",
+                socket_list.join("\n  "),
+                host_env,
+                host_env,
+                alt_sockets[0].0,
             ));
         }
-    } else if docker_host.is_some() {
-        // DOCKER_HOST is set but daemon didn't respond
-        let host_val = docker_host.unwrap();
-        hints.push(format!(
-            "DOCKER_HOST is set to '{host_val}' but the Docker daemon is not responding."
-        ));
-        hints.push(
-            "Verify your Docker runtime is started and the DOCKER_HOST value is correct."
-                .to_string(),
-        );
     } else {
-        // Socket exists but daemon isn't responding
-        hints.push(
-            "Docker socket found at /var/run/docker.sock but the daemon is not responding."
-                .to_string(),
-        );
-        hints.push("Start your Docker runtime and try again.".to_string());
+        let val = env_val.unwrap();
+        hints.push(format!(
+            "{host_env} is set to '{val}' but the {} daemon is not responding.",
+            runtime.display_name()
+        ));
+        hints.push(format!(
+            "Verify your {} runtime is started and the {host_env} value is correct.",
+            runtime.display_name()
+        ));
     }
 
-    hints.push("Verify Docker is working with: docker info".to_string());
+    hints.push(format!(
+        "Verify {} is working with: {} info",
+        runtime.display_name(),
+        runtime.binary_name()
+    ));
 
     let help_text = hints.join("\n\n");
 
     miette::miette!(help = help_text, "{summary}.\n\n  {raw_err}")
-}
-
-/// Probe for Docker-compatible sockets at non-default locations.
-fn find_alternative_sockets() -> Vec<String> {
-    let mut found = Vec::new();
-
-    // Check well-known static paths
-    for path in WELL_KNOWN_SOCKET_PATHS {
-        if std::path::Path::new(path).exists() {
-            found.push(path.to_string());
-        }
-    }
-
-    // Check home-relative paths
-    if let Some(home) = home_dir() {
-        let home_sockets = [
-            format!("{home}/.colima/docker.sock"),
-            format!("{home}/.orbstack/run/docker.sock"),
-        ];
-        for path in &home_sockets {
-            if std::path::Path::new(path).exists() && !found.contains(path) {
-                found.push(path.clone());
-            }
-        }
-    }
-
-    found
-}
-
-fn home_dir() -> Option<String> {
-    std::env::var("HOME").ok()
 }
 
 /// Create an SSH Docker client from remote options.
@@ -303,7 +375,7 @@ pub async fn find_gateway_container(docker: &Docker, port: Option<u16>) -> Resul
         .list_containers(Some(ListContainersOptionsBuilder::new().all(false).build()))
         .await
         .into_diagnostic()
-        .wrap_err("failed to list Docker containers")?;
+        .wrap_err("failed to list containers")?;
 
     let is_gateway_image = |c: &bollard::models::ContainerSummary| {
         c.image
@@ -337,11 +409,11 @@ pub async fn find_gateway_container(docker: &Docker, port: Option<u16>) -> Resul
             let hint = if let Some(p) = port {
                 format!(
                     "No openshell gateway container found listening on port {p}.\n\
-                     Is the gateway running? Check with: docker ps"
+                     Is the gateway running? Check with: docker ps (or podman ps)"
                 )
             } else {
                 "No openshell gateway container found.\n\
-                 Is the gateway running? Check with: docker ps"
+                 Is the gateway running? Check with: docker ps (or podman ps)"
                     .to_string()
             };
             Err(miette::miette!("{hint}"))
@@ -355,12 +427,12 @@ pub async fn find_gateway_container(docker: &Docker, port: Option<u16>) -> Resul
     }
 }
 
-/// Create a fresh Docker bridge network for the gateway.
+/// Create a fresh bridge network for the gateway.
 ///
 /// Always removes and recreates the network to guarantee a clean state.
-/// Stale Docker networks (e.g., from a previous interrupted destroy or
-/// Docker Desktop restart) can leave broken routing that causes the
-/// container to fail with "no default routes found".
+/// Stale networks (e.g., from a previous interrupted destroy or a runtime
+/// restart) can leave broken routing that causes the container to fail
+/// with "no default routes found".
 pub async fn ensure_network(docker: &Docker, net_name: &str) -> Result<()> {
     force_remove_network(docker, net_name).await?;
 
@@ -395,13 +467,13 @@ pub async fn ensure_network(docker: &Docker, net_name: &str) -> Result<()> {
             Err(err) => {
                 return Err(err)
                     .into_diagnostic()
-                    .wrap_err("failed to create Docker network");
+                    .wrap_err("failed to create container network");
             }
         }
     }
     Err(last_err.expect("at least one retry attempt"))
         .into_diagnostic()
-        .wrap_err("failed to create Docker network after retries (network still in use)")
+        .wrap_err("failed to create container network after retries (network still in use)")
 }
 
 pub async fn ensure_volume(docker: &Docker, name: &str) -> Result<()> {
@@ -418,7 +490,7 @@ pub async fn ensure_volume(docker: &Docker, name: &str) -> Result<()> {
         })
         .await
         .into_diagnostic()
-        .wrap_err("failed to create Docker volume")?;
+        .wrap_err("failed to create container volume")?;
     Ok(())
 }
 
@@ -482,6 +554,7 @@ pub async fn ensure_container(
     registry_username: Option<&str>,
     registry_token: Option<&str>,
     device_ids: &[String],
+    runtime: ContainerRuntime,
 ) -> Result<u16> {
     let container_name = container_name(name);
 
@@ -576,13 +649,20 @@ pub async fn ensure_container(
     );
     let exposed_ports = vec!["30051/tcp".to_string()];
 
+    // Docker needs host cgroup namespace so k3s kubelet can manage cgroup
+    // controllers (cpu, cpuset, memory, pids, etc.) required for pod QoS.
+    // Rootless Podman with cgroupns=host mounts the host cgroup tree
+    // read-only (user namespace restriction), so it needs a private cgroup
+    // namespace where the delegated controllers are writable.
+    let cgroupns = if runtime == ContainerRuntime::Podman {
+        HostConfigCgroupnsModeEnum::PRIVATE
+    } else {
+        HostConfigCgroupnsModeEnum::HOST
+    };
+
     let mut host_config = HostConfig {
         privileged: Some(true),
-        // Use host cgroup namespace so k3s kubelet can manage cgroup controllers
-        // (cpu, cpuset, memory, pids, etc.) required for pod QoS. With cgroup v2
-        // and a private cgroupns, the controllers are not delegated into the
-        // container's namespace, causing kubelet ContainerManager to fail.
-        cgroupns_mode: Some(HostConfigCgroupnsModeEnum::HOST),
+        cgroupns_mode: Some(cgroupns),
         port_bindings: Some(port_bindings),
         binds: Some(vec![format!("{}:/var/lib/rancher/k3s", volume_name(name))]),
         network_mode: Some(network_name(name)),
@@ -595,10 +675,12 @@ pub async fn ensure_container(
         // Add host gateway aliases for DNS resolution.
         // This allows both the entrypoint script and the running gateway
         // process to reach services on the Docker host.
-        extra_hosts: Some(vec![
-            "host.docker.internal:host-gateway".to_string(),
-            "host.openshell.internal:host-gateway".to_string(),
-        ]),
+        extra_hosts: Some(
+            ALL_HOST_GATEWAY_ALIASES
+                .iter()
+                .map(|alias| format!("{alias}:host-gateway"))
+                .collect(),
+        ),
         ..Default::default()
     };
 
@@ -638,7 +720,8 @@ pub async fn ensure_container(
         "--disable=traefik".to_string(),
         "--tls-san=127.0.0.1".to_string(),
         "--tls-san=localhost".to_string(),
-        "--tls-san=host.docker.internal".to_string(),
+        format!("--tls-san={DOCKER_HOST_GATEWAY_ALIAS}"),
+        format!("--tls-san={PODMAN_HOST_GATEWAY_ALIAS}"),
     ];
     for san in extra_sans {
         cmd.push(format!("--tls-san={san}"));
@@ -751,12 +834,29 @@ pub async fn ensure_container(
 
     let env = Some(env_vars);
 
+    // Set the health check explicitly on the container config so it works
+    // on both Docker and Podman. Podman with OCI image format ignores the
+    // Dockerfile HEALTHCHECK directive, but honors health checks configured
+    // at container creation time via the API.
+    let healthcheck = HealthConfig {
+        test: Some(vec![
+            "CMD".to_string(),
+            "/usr/local/bin/cluster-healthcheck.sh".to_string(),
+        ]),
+        interval: Some(HEALTH_CHECK_INTERVAL_NS),
+        timeout: Some(HEALTH_CHECK_TIMEOUT_NS),
+        start_period: Some(HEALTH_CHECK_START_PERIOD_NS),
+        retries: Some(60),
+        ..Default::default()
+    };
+
     let config = ContainerCreateBody {
         image: Some(image_ref.to_string()),
         cmd: Some(cmd),
         env,
         exposed_ports: Some(exposed_ports),
         host_config: Some(host_config),
+        healthcheck: Some(healthcheck),
         ..Default::default()
     };
 
@@ -786,10 +886,10 @@ pub struct PortConflict {
 /// Check whether any *other* running container already binds the host ports
 /// that the gateway needs.  Returns a list of conflicts (empty if none).
 ///
-/// Docker silently fails to attach networking when a port is already bound,
-/// leaving the new container with only a loopback interface.  Detecting this
-/// up-front lets us give a clear error instead of a cryptic "no default route"
-/// failure 30 seconds later.
+/// The container runtime silently fails to attach networking when a port is
+/// already bound, leaving the new container with only a loopback interface.
+/// Detecting this up-front lets us give a clear error instead of a cryptic
+/// "no default route" failure 30 seconds later.
 pub async fn check_port_conflicts(
     docker: &Docker,
     name: &str,
@@ -1035,8 +1135,8 @@ pub async fn cleanup_gateway_container(docker: &Docker, name: &str) -> Result<()
     Ok(())
 }
 
-/// Forcefully remove a Docker network, disconnecting any remaining
-/// containers first. This ensures that stale Docker network endpoints
+/// Forcefully remove a container network, disconnecting any remaining
+/// containers first. This ensures that stale network endpoints
 /// cannot prevent port bindings from being released.
 async fn force_remove_network(docker: &Docker, net_name: &str) -> Result<()> {
     let network = match docker
@@ -1068,7 +1168,7 @@ async fn force_remove_network(docker: &Docker, net_name: &str) -> Result<()> {
         Err(err) if is_not_found(&err) => Ok(()),
         Err(err) => Err(err)
             .into_diagnostic()
-            .wrap_err("failed to remove Docker network"),
+            .wrap_err("failed to remove container network"),
     }
 }
 
@@ -1308,12 +1408,13 @@ mod tests {
     }
 
     #[test]
-    fn docker_not_reachable_error_no_socket_no_docker_host() {
-        // Simulate: no socket at default path, no DOCKER_HOST set.
-        // We can't guarantee /var/run/docker.sock state in CI, but we can
-        // verify the error message is well-formed and contains guidance.
-        let err =
-            docker_not_reachable_error("connection refused", "Failed to create Docker client");
+    fn runtime_not_reachable_error_docker() {
+        // Verify the error message is well-formed for Docker runtime.
+        let err = runtime_not_reachable_error(
+            ContainerRuntime::Docker,
+            "connection refused",
+            "Failed to create Docker client",
+        );
         let msg = format!("{err:?}");
         assert!(
             msg.contains("Failed to create Docker client"),
@@ -1323,7 +1424,6 @@ mod tests {
             msg.contains("connection refused"),
             "should include the raw error"
         );
-        // The message should always include the verification step
         assert!(
             msg.contains("docker info"),
             "should suggest 'docker info' verification"
@@ -1331,16 +1431,35 @@ mod tests {
     }
 
     #[test]
-    fn docker_not_reachable_error_with_docker_host() {
+    fn runtime_not_reachable_error_podman() {
+        // Verify the error message uses Podman-specific wording.
+        let err = runtime_not_reachable_error(
+            ContainerRuntime::Podman,
+            "connection refused",
+            "Failed to connect to Podman",
+        );
+        let msg = format!("{err:?}");
+        assert!(
+            msg.contains("Failed to connect to Podman"),
+            "should include the summary"
+        );
+        assert!(
+            msg.contains("podman info"),
+            "should suggest 'podman info' verification"
+        );
+    }
+
+    #[test]
+    fn runtime_not_reachable_error_with_env_var() {
         // Simulate: DOCKER_HOST is set but daemon unresponsive.
-        // We set the env var temporarily (this is test-only).
         let prev_docker_host = std::env::var("DOCKER_HOST").ok();
         // SAFETY: test-only, single-threaded test runner for this test
         unsafe {
             std::env::set_var("DOCKER_HOST", "unix:///tmp/fake-docker.sock");
         }
 
-        let err = docker_not_reachable_error(
+        let err = runtime_not_reachable_error(
+            ContainerRuntime::Docker,
             "daemon not responding",
             "Docker socket exists but the daemon is not responding",
         );
@@ -1366,13 +1485,12 @@ mod tests {
     }
 
     #[test]
-    fn find_alternative_sockets_returns_vec() {
+    fn find_all_sockets_returns_vec() {
         // Verify the function runs without panic and returns a vec.
-        // Exact contents depend on the host system, so we just check the type.
-        let sockets = find_alternative_sockets();
-        // On any system, /var/run/docker.sock may or may not exist
+        let sockets = find_all_sockets();
+        // On any system, sockets may or may not exist
         assert!(
-            sockets.len() <= 10,
+            sockets.len() <= 20,
             "should return a reasonable number of sockets"
         );
     }
@@ -1381,34 +1499,53 @@ mod tests {
 
     #[test]
     fn resolve_gpu_empty_returns_empty() {
-        assert_eq!(resolve_gpu_device_ids(&[], true), Vec::<String>::new());
-        assert_eq!(resolve_gpu_device_ids(&[], false), Vec::<String>::new());
+        assert_eq!(
+            resolve_gpu_device_ids(&[], true, ContainerRuntime::Docker),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            resolve_gpu_device_ids(&[], false, ContainerRuntime::Podman),
+            Vec::<String>::new()
+        );
     }
 
     #[test]
-    fn resolve_gpu_auto_cdi_enabled() {
+    fn resolve_gpu_auto_cdi_enabled_docker() {
         assert_eq!(
-            resolve_gpu_device_ids(&["auto".to_string()], true),
+            resolve_gpu_device_ids(&["auto".to_string()], true, ContainerRuntime::Docker),
             vec!["nvidia.com/gpu=all"],
         );
     }
 
     #[test]
-    fn resolve_gpu_auto_cdi_disabled() {
+    fn resolve_gpu_auto_cdi_disabled_docker() {
         assert_eq!(
-            resolve_gpu_device_ids(&["auto".to_string()], false),
+            resolve_gpu_device_ids(&["auto".to_string()], false, ContainerRuntime::Docker),
             vec!["legacy"],
+        );
+    }
+
+    #[test]
+    fn resolve_gpu_auto_podman_always_cdi() {
+        // Podman always uses CDI, even when cdi_enabled is false
+        assert_eq!(
+            resolve_gpu_device_ids(&["auto".to_string()], false, ContainerRuntime::Podman),
+            vec!["nvidia.com/gpu=all"],
+        );
+        assert_eq!(
+            resolve_gpu_device_ids(&["auto".to_string()], true, ContainerRuntime::Podman),
+            vec!["nvidia.com/gpu=all"],
         );
     }
 
     #[test]
     fn resolve_gpu_legacy_passthrough() {
         assert_eq!(
-            resolve_gpu_device_ids(&["legacy".to_string()], true),
+            resolve_gpu_device_ids(&["legacy".to_string()], true, ContainerRuntime::Docker),
             vec!["legacy"],
         );
         assert_eq!(
-            resolve_gpu_device_ids(&["legacy".to_string()], false),
+            resolve_gpu_device_ids(&["legacy".to_string()], false, ContainerRuntime::Docker),
             vec!["legacy"],
         );
     }
@@ -1416,13 +1553,22 @@ mod tests {
     #[test]
     fn resolve_gpu_cdi_ids_passthrough() {
         let ids = vec!["nvidia.com/gpu=all".to_string()];
-        assert_eq!(resolve_gpu_device_ids(&ids, true), ids);
-        assert_eq!(resolve_gpu_device_ids(&ids, false), ids);
+        assert_eq!(
+            resolve_gpu_device_ids(&ids, true, ContainerRuntime::Docker),
+            ids
+        );
+        assert_eq!(
+            resolve_gpu_device_ids(&ids, false, ContainerRuntime::Podman),
+            ids
+        );
 
         let multi = vec![
             "nvidia.com/gpu=0".to_string(),
             "nvidia.com/gpu=1".to_string(),
         ];
-        assert_eq!(resolve_gpu_device_ids(&multi, true), multi);
+        assert_eq!(
+            resolve_gpu_device_ids(&multi, true, ContainerRuntime::Docker),
+            multi
+        );
     }
 }

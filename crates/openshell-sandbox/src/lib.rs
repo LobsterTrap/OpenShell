@@ -895,8 +895,8 @@ const PROXY_BASELINE_READ_ONLY: &[&str] = &[
 ];
 
 /// Minimum read-write paths required for a proxy-mode sandbox child process:
-/// user working directory and temporary files.
-const PROXY_BASELINE_READ_WRITE: &[&str] = &["/sandbox", "/tmp"];
+/// user working directory, temporary files, and /dev/null for output redirection.
+const PROXY_BASELINE_READ_WRITE: &[&str] = &["/sandbox", "/tmp", "/dev/null"];
 
 /// GPU read-only paths.
 ///
@@ -1366,6 +1366,7 @@ fn validate_sandbox_user(policy: &SandboxPolicy) -> Result<()> {
 #[cfg(unix)]
 fn prepare_filesystem(policy: &SandboxPolicy) -> Result<()> {
     use nix::unistd::{Group, User, chown};
+    use std::os::unix::fs::FileTypeExt;
 
     let user_name = match policy.process.run_as_user.as_deref() {
         Some(name) if !name.is_empty() => Some(name),
@@ -1421,6 +1422,14 @@ fn prepare_filesystem(policy: &SandboxPolicy) -> Result<()> {
                     "read_write path '{}' is a symlink — refusing to chown (potential privilege escalation)",
                     path.display()
                 ));
+            }
+            // Skip chown on character/block devices (e.g. /dev/null).
+            // These are kernel-managed and already world-accessible. Attempting
+            // to chown them fails with EPERM inside user namespaces (rootless
+            // container runtimes like Podman).
+            if meta.file_type().is_char_device() || meta.file_type().is_block_device() {
+                debug!(path = %path.display(), "Skipping chown on device node");
+                continue;
             }
         } else {
             debug!(path = %path.display(), "Creating read_write directory");

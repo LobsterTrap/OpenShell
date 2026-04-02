@@ -36,11 +36,11 @@ The gateway is responsible for:
 - Managing inference configuration and serving inference bundles so sandboxes can route requests to the correct backend.
 - Providing the SSH tunnel endpoint so you can connect to sandboxes without exposing them directly.
 
-The gateway runs inside a Docker container and exposes a single port (gRPC and HTTP multiplexed), secured by mTLS by default. No separate Kubernetes installation is required. It can be deployed locally, on a remote host via SSH, or behind a cloud reverse proxy.
+The gateway runs inside a Docker or Podman container and exposes a single port (gRPC and HTTP multiplexed), secured by mTLS by default. No separate Kubernetes installation is required. It can be deployed locally, on a remote host via SSH, or behind a cloud reverse proxy.
 
 ## Deploy a Local Gateway
 
-Deploy a gateway on your workstation. The only prerequisite is a running Docker daemon.
+Deploy a gateway on your workstation. The only prerequisite is a running Docker or Podman daemon.
 
 ```console
 $ openshell gateway start
@@ -65,7 +65,7 @@ $ openshell gateway start --name dev-local
 
 ## Deploy a Remote Gateway
 
-Deploy a gateway on a remote machine accessible via SSH. The only dependency on the remote host is Docker.
+Deploy a gateway on a remote machine accessible via SSH. The only dependency on the remote host is Docker or Podman.
 
 ```console
 $ openshell gateway start --remote user@hostname
@@ -173,6 +173,42 @@ $ openshell gateway info --name my-remote-cluster
 | `--disable-gateway-auth` | Skip mTLS client certificate checks. Use when a reverse proxy cannot forward client certs. |
 | `--registry-username` | Username for registry authentication. Defaults to `__token__` when `--registry-token` is set. Only needed for private registries. Also configurable with `OPENSHELL_REGISTRY_USERNAME`. |
 | `--registry-token` | Authentication token for pulling container images. For GHCR, a GitHub PAT with `read:packages` scope. Only needed for private registries. Also configurable with `OPENSHELL_REGISTRY_TOKEN`. |
+
+## Container Runtime
+
+OpenShell supports both Docker and Podman as container runtimes. When you do not specify a runtime, the CLI auto-detects the available runtime by probing sockets and binaries. If both Docker and Podman are available, the CLI prefers Podman.
+
+To select a runtime explicitly, use the `--container-runtime` flag:
+
+```console
+$ openshell gateway start --container-runtime podman
+$ openshell gateway start --container-runtime docker
+```
+
+You can also set the `OPENSHELL_CONTAINER_RUNTIME` environment variable to `docker` or `podman`. The CLI resolves the runtime in this order:
+
+1. `--container-runtime` flag (highest priority)
+2. `OPENSHELL_CONTAINER_RUNTIME` environment variable
+3. Auto-detection (Podman preferred when both are available)
+
+### Rootless Podman on Linux
+
+:::{note}
+Rootless Podman requires a one-time cgroup delegation setup. Without this, the gateway fails to start because the embedded k3s process cannot manage resource controllers.
+:::
+
+Run the following commands to delegate the required cgroup controllers:
+
+```console
+$ sudo mkdir -p /etc/systemd/system/user@.service.d
+$ sudo tee /etc/systemd/system/user@.service.d/delegate.conf <<'EOF'
+[Service]
+Delegate=cpu cpuset io memory pids
+EOF
+$ sudo systemctl daemon-reload
+```
+
+Then log out and back in for the changes to take effect.
 
 ## Stop and Destroy
 

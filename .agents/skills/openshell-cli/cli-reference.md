@@ -118,7 +118,7 @@ Set the active gateway. Writes to `~/.config/openshell/active_gateway`. When cal
 
 ### `openshell doctor logs`
 
-Fetch logs from the gateway Docker container.
+Fetch logs from the gateway container.
 
 | Flag | Default | Description |
 |------|---------|-------------|
@@ -131,7 +131,7 @@ Fetch logs from the gateway Docker container.
 ### `openshell doctor exec -- <COMMAND...>`
 
 Run a command inside the gateway container with KUBECONFIG pre-configured.
-Launches an interactive `docker exec` session (tunnelled over SSH for remote gateways).
+Launches an interactive `container exec` session (tunnelled over SSH for remote gateways).
 
 | Flag | Default | Description |
 |------|---------|-------------|

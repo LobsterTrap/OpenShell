@@ -3,8 +3,9 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-# Clean up stale Docker images, volumes, and build cache that are not in use
+# Clean up stale container images, volumes, and build cache that are not in use
 # by the currently deployed OpenShell cluster.
+# Supports both Docker and Podman via detect-container-runtime.sh.
 #
 # Preserves:
 #   - Current openshell/* :dev images (and 127.0.0.1:5000 registry mirrors)
@@ -22,6 +23,9 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../tasks/scripts" && pwd)"
+source "${SCRIPT_DIR}/detect-container-runtime.sh"
+
 # ---------------------------------------------------------------------------
 # Options
 # ---------------------------------------------------------------------------
@@ -30,18 +34,21 @@ SKIP_CACHE=false
 FORCE=false
 
 usage() {
-  sed -n '/^# Usage:/,/^$/p' "$0" | sed 's/^# \?//'
-  exit 0
+	sed -n '/^# Usage:/,/^$/p' "$0" | sed 's/^# \?//'
+	exit 0
 }
 
 for arg in "$@"; do
-  case "$arg" in
-    --dry-run)    DRY_RUN=true ;;
-    --skip-cache) SKIP_CACHE=true ;;
-    --force)      FORCE=true ;;
-    -h|--help)    usage ;;
-    *) echo "Unknown option: $arg"; usage ;;
-  esac
+	case "$arg" in
+	--dry-run) DRY_RUN=true ;;
+	--skip-cache) SKIP_CACHE=true ;;
+	--force) FORCE=true ;;
+	-h | --help) usage ;;
+	*)
+		echo "Unknown option: $arg"
+		usage
+		;;
+	esac
 done
 
 # ---------------------------------------------------------------------------
@@ -54,24 +61,24 @@ YELLOW='\033[0;33m'
 RED='\033[0;31m'
 RESET='\033[0m'
 
-info()  { echo -e "${BOLD}==> $*${RESET}"; }
-note()  { echo -e "    ${DIM}$*${RESET}"; }
-ok()    { echo -e "    ${GREEN}$*${RESET}"; }
-warn()  { echo -e "    ${YELLOW}$*${RESET}"; }
-err()   { echo -e "    ${RED}$*${RESET}"; }
-dry()   { echo -e "    ${YELLOW}[dry-run]${RESET} $*"; }
+info() { echo -e "${BOLD}==> $*${RESET}"; }
+note() { echo -e "    ${DIM}$*${RESET}"; }
+ok() { echo -e "    ${GREEN}$*${RESET}"; }
+warn() { echo -e "    ${YELLOW}$*${RESET}"; }
+err() { echo -e "    ${RED}$*${RESET}"; }
+dry() { echo -e "    ${YELLOW}[dry-run]${RESET} $*"; }
 
 # ---------------------------------------------------------------------------
 # Preflight
 # ---------------------------------------------------------------------------
-if ! command -v docker &>/dev/null; then
-  echo "Error: docker is not installed or not in PATH" >&2
-  exit 1
+if ! command -v "$CONTAINER_RUNTIME" &>/dev/null; then
+	echo "Error: $CONTAINER_RUNTIME is not installed or not in PATH" >&2
+	exit 1
 fi
 
-if ! docker info &>/dev/null; then
-  echo "Error: Docker daemon is not running" >&2
-  exit 1
+if ! "$CONTAINER_RUNTIME" info &>/dev/null; then
+	echo "Error: $CONTAINER_RUNTIME daemon is not running" >&2
+	exit 1
 fi
 
 # ---------------------------------------------------------------------------
@@ -79,8 +86,8 @@ fi
 # Any tagged image whose repository starts with one of these is kept.
 # ---------------------------------------------------------------------------
 CURRENT_IMAGE_PREFIXES=(
-  "openshell/"
-  "127.0.0.1:5000/openshell/"
+	"openshell/"
+	"127.0.0.1:5000/openshell/"
 )
 
 # ---------------------------------------------------------------------------
@@ -88,63 +95,63 @@ CURRENT_IMAGE_PREFIXES=(
 # These are pulled from remote registries and are expensive to re-download.
 # ---------------------------------------------------------------------------
 KEEP_IMAGE_PREFIXES=(
-  "registry"
-  "rancher/k3s"
-  "ghcr.io/k3d-io/"
-  "kindest/"
-  "alpine"
-  "python"
-  "rust"
-  "ghcr.io/astral-sh/uv"
-  "redis"
-  "pgvector/"
-  "minio/"
+	"registry"
+	"rancher/k3s"
+	"ghcr.io/k3d-io/"
+	"kindest/"
+	"alpine"
+	"python"
+	"rust"
+	"ghcr.io/astral-sh/uv"
+	"redis"
+	"pgvector/"
+	"minio/"
 )
 
 # Returns 0 if the image repository should be kept, 1 otherwise.
 should_keep_image() {
-  local repo="$1"
+	local repo="$1"
 
-  # Keep current cluster images
-  for prefix in "${CURRENT_IMAGE_PREFIXES[@]}"; do
-    if [[ "$repo" == "$prefix"* ]]; then
-      return 0
-    fi
-  done
+	# Keep current cluster images
+	for prefix in "${CURRENT_IMAGE_PREFIXES[@]}"; do
+		if [[ "$repo" == "$prefix"* ]]; then
+			return 0
+		fi
+	done
 
-  # Keep infrastructure / base images
-  for prefix in "${KEEP_IMAGE_PREFIXES[@]}"; do
-    if [[ "$repo" == "$prefix"* ]]; then
-      return 0
-    fi
-  done
+	# Keep infrastructure / base images
+	for prefix in "${KEEP_IMAGE_PREFIXES[@]}"; do
+		if [[ "$repo" == "$prefix"* ]]; then
+			return 0
+		fi
+	done
 
-  return 1
+	return 1
 }
 
 # ---------------------------------------------------------------------------
 # Snapshot disk usage before cleanup
 # ---------------------------------------------------------------------------
-info "Current Docker disk usage"
-docker system df
+info "Current ${CONTAINER_RUNTIME} disk usage"
+"$CONTAINER_RUNTIME" system df
 echo
 
 # ---------------------------------------------------------------------------
 # Confirmation
 # ---------------------------------------------------------------------------
 if [[ "$DRY_RUN" == true ]]; then
-  warn "Running in dry-run mode -- nothing will be deleted"
-  echo
+	warn "Running in dry-run mode -- nothing will be deleted"
+	echo
 elif [[ "$FORCE" != true ]]; then
-  echo -e "${BOLD}This will remove stale images, unused volumes, and build cache.${RESET}"
-  echo "The currently deployed cluster images and running containers are preserved."
-  echo
-  read -r -p "Continue? [y/N] " confirm
-  if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
-    echo "Aborted."
-    exit 0
-  fi
-  echo
+	echo -e "${BOLD}This will remove stale images, unused volumes, and build cache.${RESET}"
+	echo "The currently deployed cluster images and running containers are preserved."
+	echo
+	read -r -p "Continue? [y/N] " confirm
+	if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+		echo "Aborted."
+		exit 0
+	fi
+	echo
 fi
 
 # Track totals for the summary
@@ -156,17 +163,17 @@ TOTAL_VOLUMES_REMOVED=0
 # ---------------------------------------------------------------------------
 info "Removing dangling images..."
 
-dangling_count=$(docker images --filter "dangling=true" -q | wc -l | tr -d ' ')
+dangling_count=$("$CONTAINER_RUNTIME" images --filter "dangling=true" -q | wc -l | tr -d ' ')
 if [[ "$dangling_count" -gt 0 ]]; then
-  note "Found $dangling_count dangling image(s)"
-  if [[ "$DRY_RUN" == true ]]; then
-    dry "Would remove $dangling_count dangling image(s)"
-  else
-    docker image prune -f | tail -1
-    TOTAL_IMAGES_REMOVED=$((TOTAL_IMAGES_REMOVED + dangling_count))
-  fi
+	note "Found $dangling_count dangling image(s)"
+	if [[ "$DRY_RUN" == true ]]; then
+		dry "Would remove $dangling_count dangling image(s)"
+	else
+		"$CONTAINER_RUNTIME" image prune -f | tail -1
+		TOTAL_IMAGES_REMOVED=$((TOTAL_IMAGES_REMOVED + dangling_count))
+	fi
 else
-  ok "No dangling images found"
+	ok "No dangling images found"
 fi
 echo
 
@@ -177,35 +184,35 @@ info "Removing stale tagged images..."
 
 # Collect image IDs that are directly used by running containers so we never
 # touch them regardless of tag matching.
-running_image_ids=$(docker ps -q 2>/dev/null | xargs -r docker inspect --format '{{.Image}}' 2>/dev/null | sort -u)
+running_image_ids=$("$CONTAINER_RUNTIME" ps -q 2>/dev/null | xargs -r "$CONTAINER_RUNTIME" inspect --format '{{.Image}}' 2>/dev/null | sort -u)
 
 stale_images=()
 while IFS=$'\t' read -r repo tag id; do
-  # Skip dangling images (already handled above)
-  [[ "$repo" == "<none>" ]] && continue
+	# Skip dangling images (already handled above)
+	[[ "$repo" == "<none>" ]] && continue
 
-  # Never remove images actively used by a container
-  if echo "$running_image_ids" | grep -q "$id" 2>/dev/null; then
-    continue
-  fi
+	# Never remove images actively used by a container
+	if echo "$running_image_ids" | grep -q "$id" 2>/dev/null; then
+		continue
+	fi
 
-  if ! should_keep_image "$repo"; then
-    stale_images+=("${repo}:${tag}")
-  fi
-done < <(docker images --format '{{.Repository}}\t{{.Tag}}\t{{.ID}}')
+	if ! should_keep_image "$repo"; then
+		stale_images+=("${repo}:${tag}")
+	fi
+done < <("$CONTAINER_RUNTIME" images --format '{{.Repository}}\t{{.Tag}}\t{{.ID}}')
 
 if [[ ${#stale_images[@]} -gt 0 ]]; then
-  for img in "${stale_images[@]}"; do
-    if [[ "$DRY_RUN" == true ]]; then
-      dry "Would remove $img"
-    else
-      note "Removing $img"
-      docker rmi "$img" >/dev/null 2>&1 || warn "Could not remove $img (may share layers)"
-      TOTAL_IMAGES_REMOVED=$((TOTAL_IMAGES_REMOVED + 1))
-    fi
-  done
+	for img in "${stale_images[@]}"; do
+		if [[ "$DRY_RUN" == true ]]; then
+			dry "Would remove $img"
+		else
+			note "Removing $img"
+			"$CONTAINER_RUNTIME" rmi "$img" >/dev/null 2>&1 || warn "Could not remove $img (may share layers)"
+			TOTAL_IMAGES_REMOVED=$((TOTAL_IMAGES_REMOVED + 1))
+		fi
+	done
 else
-  ok "No stale tagged images found"
+	ok "No stale tagged images found"
 fi
 echo
 
@@ -215,30 +222,30 @@ echo
 info "Removing unused volumes..."
 
 # Identify volumes in use by running containers
-in_use_volumes=$(docker ps -q 2>/dev/null \
-  | xargs -r docker inspect --format '{{range .Mounts}}{{.Name}} {{end}}' 2>/dev/null \
-  | tr ' ' '\n' | sort -u | grep -v '^$')
+in_use_volumes=$("$CONTAINER_RUNTIME" ps -q 2>/dev/null |
+	xargs -r "$CONTAINER_RUNTIME" inspect --format '{{range .Mounts}}{{.Name}} {{end}}' 2>/dev/null |
+	tr ' ' '\n' | sort -u | grep -v '^$')
 
 unused_volumes=()
 while read -r vol; do
-  [[ -z "$vol" ]] && continue
-  if ! echo "$in_use_volumes" | grep -qx "$vol" 2>/dev/null; then
-    unused_volumes+=("$vol")
-  fi
-done < <(docker volume ls -q)
+	[[ -z "$vol" ]] && continue
+	if ! echo "$in_use_volumes" | grep -qx "$vol" 2>/dev/null; then
+		unused_volumes+=("$vol")
+	fi
+done < <("$CONTAINER_RUNTIME" volume ls -q)
 
 if [[ ${#unused_volumes[@]} -gt 0 ]]; then
-  note "Found ${#unused_volumes[@]} unused volume(s)"
-  for vol in "${unused_volumes[@]}"; do
-    if [[ "$DRY_RUN" == true ]]; then
-      dry "Would remove volume $vol"
-    else
-      docker volume rm "$vol" >/dev/null 2>&1 || warn "Could not remove volume $vol"
-      TOTAL_VOLUMES_REMOVED=$((TOTAL_VOLUMES_REMOVED + 1))
-    fi
-  done
+	note "Found ${#unused_volumes[@]} unused volume(s)"
+	for vol in "${unused_volumes[@]}"; do
+		if [[ "$DRY_RUN" == true ]]; then
+			dry "Would remove volume $vol"
+		else
+			"$CONTAINER_RUNTIME" volume rm "$vol" >/dev/null 2>&1 || warn "Could not remove volume $vol"
+			TOTAL_VOLUMES_REMOVED=$((TOTAL_VOLUMES_REMOVED + 1))
+		fi
+	done
 else
-  ok "No unused volumes found"
+	ok "No unused volumes found"
 fi
 echo
 
@@ -246,29 +253,35 @@ echo
 # Step 4: Prune build cache
 # ---------------------------------------------------------------------------
 if [[ "$SKIP_CACHE" == true ]]; then
-  info "Skipping build cache prune (--skip-cache)"
+	info "Skipping build cache prune (--skip-cache)"
 else
-  info "Pruning build cache..."
-  cache_size=$(docker system df --format '{{.Size}}' 2>/dev/null | tail -1)
-  if [[ "$DRY_RUN" == true ]]; then
-    dry "Would prune build cache (current size: ${cache_size:-unknown})"
-  else
-    docker builder prune -af 2>&1 | tail -1
-  fi
+	info "Pruning build cache..."
+	cache_size=$("$CONTAINER_RUNTIME" system df --format '{{.Size}}' 2>/dev/null | tail -1)
+	if [[ "$DRY_RUN" == true ]]; then
+		dry "Would prune build cache (current size: ${cache_size:-unknown})"
+	elif [[ "$CONTAINER_RUNTIME" == "podman" ]]; then
+		if command -v buildah &>/dev/null; then
+			buildah prune -af 2>&1 | tail -1
+		else
+			note "buildah not found, skipping build cache prune"
+		fi
+	else
+		"$CONTAINER_RUNTIME" builder prune -af 2>&1 | tail -1
+	fi
 fi
 echo
 
 # ---------------------------------------------------------------------------
 # Step 5: Clean up any newly-dangling images left after tagged image removal
 # ---------------------------------------------------------------------------
-remaining_dangling=$(docker images --filter "dangling=true" -q | wc -l | tr -d ' ')
+remaining_dangling=$("$CONTAINER_RUNTIME" images --filter "dangling=true" -q | wc -l | tr -d ' ')
 if [[ "$remaining_dangling" -gt 0 ]]; then
-  info "Cleaning up $remaining_dangling residual dangling image(s)..."
-  if [[ "$DRY_RUN" != true ]]; then
-    docker image prune -f >/dev/null 2>&1
-    TOTAL_IMAGES_REMOVED=$((TOTAL_IMAGES_REMOVED + remaining_dangling))
-  fi
-  echo
+	info "Cleaning up $remaining_dangling residual dangling image(s)..."
+	if [[ "$DRY_RUN" != true ]]; then
+		"$CONTAINER_RUNTIME" image prune -f >/dev/null 2>&1
+		TOTAL_IMAGES_REMOVED=$((TOTAL_IMAGES_REMOVED + remaining_dangling))
+	fi
+	echo
 fi
 
 # ---------------------------------------------------------------------------
@@ -277,11 +290,11 @@ fi
 info "Cleanup complete"
 echo
 if [[ "$DRY_RUN" == true ]]; then
-  warn "Dry run -- no changes were made. Re-run without --dry-run to apply."
+	warn "Dry run -- no changes were made. Re-run without --dry-run to apply."
 else
-  docker system df
+	"$CONTAINER_RUNTIME" system df
 fi
 echo
 
 info "Remaining images:"
-docker images --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}"
+"$CONTAINER_RUNTIME" images --format "table {{.Repository}}\t{{.Tag}}\t{{.Size}}"

@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::RemoteOptions;
+use crate::container_runtime::ContainerRuntime;
 use crate::paths::{active_gateway_path, gateways_dir, last_sandbox_path};
 use miette::{IntoDiagnostic, Result, WrapErr};
 use openshell_core::paths::ensure_parent_dir_restricted;
@@ -45,6 +46,11 @@ pub struct GatewayMetadata {
         alias = "cf_auth_url"
     )]
     pub edge_auth_url: Option<String>,
+
+    /// Container runtime used for this gateway.
+    /// Defaults to Docker for backward compatibility with existing metadata.
+    #[serde(default)]
+    pub container_runtime: ContainerRuntime,
 }
 
 impl GatewayMetadata {
@@ -135,13 +141,20 @@ pub fn create_gateway_metadata_with_host(
         auth_mode: None,
         edge_team_domain: None,
         edge_auth_url: None,
+        container_runtime: ContainerRuntime::default(),
     }
 }
 
 pub fn local_gateway_host() -> Option<String> {
+    // Check DOCKER_HOST first, then CONTAINER_HOST (Podman).
     std::env::var("DOCKER_HOST")
         .ok()
         .and_then(|value| local_gateway_host_from_docker_host(&value))
+        .or_else(|| {
+            std::env::var("CONTAINER_HOST")
+                .ok()
+                .and_then(|value| local_gateway_host_from_docker_host(&value))
+        })
 }
 
 pub fn local_gateway_host_from_docker_host(docker_host: &str) -> Option<String> {
@@ -463,6 +476,7 @@ mod tests {
             auth_mode: None,
             edge_team_domain: None,
             edge_auth_url: None,
+            container_runtime: ContainerRuntime::Podman,
         };
         let json = serde_json::to_string(&meta).unwrap();
         let parsed: GatewayMetadata = serde_json::from_str(&json).unwrap();

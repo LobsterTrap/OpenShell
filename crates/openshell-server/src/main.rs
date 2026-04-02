@@ -93,7 +93,8 @@ struct Args {
 
     /// Host gateway IP for sandbox pod hostAliases.
     /// When set, sandbox pods get hostAliases entries mapping
-    /// host.docker.internal and host.openshell.internal to this IP.
+    /// host.docker.internal, host.containers.internal, and
+    /// host.openshell.internal to this IP.
     #[arg(long, env = "OPENSHELL_HOST_GATEWAY_IP")]
     host_gateway_ip: Option<String>,
 

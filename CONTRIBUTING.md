@@ -118,7 +118,7 @@ Project requirements:
 
 - Rust 1.88+
 - Python 3.12+
-- Docker (running)
+- Docker or Podman (running)
 
 ## Getting Started
 

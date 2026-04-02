@@ -13,9 +13,9 @@ graph TB
     end
 
     %% ============================================================
-    %% KUBERNETES CLUSTER (single Docker container)
+    %% KUBERNETES CLUSTER (single container — Docker or Podman)
     %% ============================================================
-    subgraph Cluster["OpenShell Cluster Container (Docker)"]
+    subgraph Cluster["OpenShell Cluster Container (Docker / Podman)"]
 
         subgraph K3s["k3s (v1.35.2-k3s1)"]
             KubeAPI["Kubernetes API<br/>:6443"]

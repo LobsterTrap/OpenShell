@@ -222,7 +222,7 @@ Example symptom:
 
 This failure commonly appears on Linux hosts that:
 
-- Run the OpenShell gateway in Docker
+- Run the OpenShell gateway in Docker or Podman
 - Route `inference.local` to a host-local OpenAI-compatible endpoint such as Ollama
 - Have a host firewall or networking configuration that denies container-to-host traffic by default
 
@@ -248,7 +248,7 @@ OpenShell injects `host.docker.internal` and `host.openshell.internal` into sand
    curl -sS http://172.17.0.1:11434/v1/models
    ```
 
-3. Test the same endpoint from the OpenShell cluster container:
+3. Test the same endpoint from the OpenShell cluster container (replace `docker` with `podman` if using Podman):
 
    ```bash
    docker exec openshell-cluster-<gateway> wget -qO- -T 5 http://host.docker.internal:11434/v1/models
@@ -258,23 +258,23 @@ If steps 1 and 2 succeed but step 3 times out, the host firewall or network conf
 
 ### Fix
 
-Allow the Docker bridge network used by the OpenShell cluster to reach the host-local inference port. The exact command depends on your firewall tooling (iptables, nftables, firewalld, UFW, etc.), but the rule should allow:
+Allow the container bridge network used by the OpenShell cluster to reach the host-local inference port. The exact command depends on your firewall tooling (iptables, nftables, firewalld, UFW, etc.), but the rule should allow:
 
-- **Source**: the Docker bridge subnet used by the OpenShell cluster container (commonly `172.18.0.0/16`)
+- **Source**: the container bridge subnet used by the OpenShell cluster container (commonly `172.18.0.0/16`)
 - **Destination**: the host gateway IP injected into sandbox pods for `host.docker.internal` (commonly `172.17.0.1`)
 - **Port**: the inference server port (e.g. `11434/tcp` for Ollama)
 
 To find the actual values on your system:
 
 ```bash
-# Docker bridge subnet for the OpenShell cluster network
+# Container bridge subnet for the OpenShell cluster network
 docker network inspect $(docker network ls --filter name=openshell -q) --format '{{range .IPAM.Config}}{{.Subnet}}{{end}}'
 
 # Host gateway IP visible from inside the container
 docker exec openshell-cluster-<gateway> cat /etc/hosts | grep host.docker.internal
 ```
 
-Adjust the source subnet, destination IP, or port to match your local Docker network layout.
+Adjust the source subnet, destination IP, or port to match your local container network layout.
 
 ### Verify the Fix
 
@@ -311,7 +311,7 @@ Both commands should return the upstream model list.
 | `no compatible route` | Provider type does not match request shape | Switch provider type or change the client API |
 | Direct call to external host is denied | Missing policy or provider attachment | Update `network_policies` and launch sandbox with the right provider |
 | SDK fails on empty auth token | Client requires a non-empty API key even though OpenShell injects the real one | Use any placeholder token such as `test` |
-| Upstream timeout from container to host-local backend | Host firewall or network config blocks container-to-host traffic | Allow the Docker bridge subnet to reach the inference port on the host gateway IP (see firewall fix section above) |
+| Upstream timeout from container to host-local backend | Host firewall or network config blocks container-to-host traffic | Allow the container bridge subnet to reach the inference port on the host gateway IP (see firewall fix section above) |
 
 ## Full Diagnostic Dump
 

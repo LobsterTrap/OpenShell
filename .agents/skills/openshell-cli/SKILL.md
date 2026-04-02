@@ -26,7 +26,7 @@ This is your primary fallback. Use it freely -- the CLI's help output is authori
 ## Prerequisites
 
 - `openshell` is on the PATH (install via `cargo install --path crates/openshell-cli`)
-- Docker is running (required for gateway operations and BYOC)
+- Docker or Podman is running (required for gateway operations and BYOC)
 - For remote clusters: SSH access to the target host
 
 ## Command Reference
@@ -45,7 +45,7 @@ Use this workflow when no cluster exists yet and the user wants to get a sandbox
 openshell gateway start
 ```
 
-This provisions a local k3s cluster in Docker. The CLI will prompt interactively if a cluster already exists. The cluster is automatically set as the active gateway.
+This provisions a local k3s cluster in a container. The CLI will prompt interactively if a cluster already exists. The cluster is automatically set as the active gateway.
 
 For remote deployment:
 
@@ -325,7 +325,7 @@ openshell sandbox create --from ./Dockerfile --name my-app
 
 The `--from` flag accepts a Dockerfile path, a directory containing a Dockerfile, a full image reference (e.g. `myregistry.com/img:tag`), or a community sandbox name (e.g. `openclaw`).
 
-When given a Dockerfile or directory, the image is built locally via Docker and imported directly into the cluster's containerd runtime. No external registry needed.
+When given a Dockerfile or directory, the image is built locally via Docker or Podman and imported directly into the cluster's containerd runtime. No external registry needed.
 
 When `--from` is specified, the CLI:
 - Clears default `run_as_user`/`run_as_group` (custom images may not have the `sandbox` user)

@@ -93,9 +93,12 @@ These pipelines connect skills into end-to-end workflows. Individual skill files
 
 - Always use `uv` for Python commands (e.g., `uv pip install`, `uv run`, `uv venv`)
 
-## Docker
+## Container Runtimes (Docker / Podman)
 
-- Always prefer `mise` commands over direct docker builds (e.g., `mise run docker:build` instead of `docker build`)
+- Always prefer `mise` commands over direct docker/podman builds (e.g., `mise run docker:build` instead of `docker build`)
+- The codebase supports both Docker and Podman. Podman is preferred when both are available. Override with `--container-runtime` or `OPENSHELL_CONTAINER_RUNTIME`.
+- Bollard (the Rust Docker client library) connects to Podman via its Docker-compatible API — no separate Podman client is needed.
+- When referencing host gateway aliases, use both `host.docker.internal` and `host.containers.internal` for cross-runtime compatibility.
 
 ## Cluster Infrastructure Changes
 

@@ -16,7 +16,7 @@ OpenShell is built agent-first. The project ships with agent skills for everythi
 
 ### Prerequisites
 
-- **Docker** — Docker Desktop (or a Docker daemon) must be running.
+- **Docker or Podman** — Docker Desktop, a Docker daemon, or Podman must be running. Rootless Podman on Linux requires [cgroup delegation](https://docs.nvidia.com/openshell/latest/sandboxes/manage-gateways.html#rootless-podman-on-linux); Podman Machine (macOS) works out of the box.
 
 ### Install
 
@@ -99,7 +99,7 @@ OpenShell isolates each sandbox in its own container with policy-enforced egress
 | **Policy Engine**  | Enforces filesystem, network, and process constraints from application layer down to kernel. |
 | **Privacy Router** | Privacy-aware LLM routing that keeps sensitive context on sandbox compute.                   |
 
-Under the hood, all these components run as a [K3s](https://k3s.io/) Kubernetes cluster inside a single Docker container — no separate K8s install required. The `openshell gateway` commands take care of provisioning the container and cluster.
+Under the hood, all these components run as a [K3s](https://k3s.io/) Kubernetes cluster inside a single container (Docker or Podman) — no separate K8s install required. The `openshell gateway` commands take care of provisioning the container and cluster.
 
 ## Protection Layers
 

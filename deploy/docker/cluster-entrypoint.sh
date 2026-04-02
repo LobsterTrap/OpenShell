@@ -48,34 +48,34 @@ set -e
 # built-in or expose it differently, and will work correctly without the module
 # being explicitly loaded as a separate .ko.
 if [ ! -f /proc/sys/net/bridge/bridge-nf-call-iptables ]; then
-    echo "Warning: br_netfilter does not appear to be loaded on the host." >&2
-    echo "         Pod-to-service networking (including kube-dns) may not work without it." >&2
-    echo "         If the cluster fails to start or DNS is broken, try loading it on the host:" >&2
-    echo "           sudo modprobe br_netfilter" >&2
-    echo "         To persist across reboots:" >&2
-    echo "           echo br_netfilter | sudo tee /etc/modules-load.d/br_netfilter.conf" >&2
+	echo "Warning: br_netfilter does not appear to be loaded on the host." >&2
+	echo "         Pod-to-service networking (including kube-dns) may not work without it." >&2
+	echo "         If the cluster fails to start or DNS is broken, try loading it on the host:" >&2
+	echo "           sudo modprobe br_netfilter" >&2
+	echo "         To persist across reboots:" >&2
+	echo "           echo br_netfilter | sudo tee /etc/modules-load.d/br_netfilter.conf" >&2
 fi
 
 if [ -z "${USE_IPTABLES_LEGACY:-}" ]; then
-    if iptables -t filter -N _xt_probe 2>/dev/null; then
-        _probe_rc=0
-        iptables -t filter -A _xt_probe -m comment --comment "probe" -j ACCEPT \
-            2>/dev/null || _probe_rc=$?
-        iptables -t filter -D _xt_probe -m comment --comment "probe" -j ACCEPT \
-            2>/dev/null || true
-        iptables -t filter -X _xt_probe 2>/dev/null || true
-        [ "$_probe_rc" -ne 0 ] && USE_IPTABLES_LEGACY=1
-    fi
+	if iptables -t filter -N _xt_probe 2>/dev/null; then
+		_probe_rc=0
+		iptables -t filter -A _xt_probe -m comment --comment "probe" -j ACCEPT \
+			2>/dev/null || _probe_rc=$?
+		iptables -t filter -D _xt_probe -m comment --comment "probe" -j ACCEPT \
+			2>/dev/null || true
+		iptables -t filter -X _xt_probe 2>/dev/null || true
+		[ "$_probe_rc" -ne 0 ] && USE_IPTABLES_LEGACY=1
+	fi
 fi
 
 if [ "${USE_IPTABLES_LEGACY:-0}" = "1" ]; then
-    echo "iptables nf_tables xt extension bridge unavailable — switching to iptables-legacy"
-    if update-alternatives --set iptables /usr/sbin/iptables-legacy 2>/dev/null && \
-       update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy 2>/dev/null; then
-        echo "Now using iptables-legacy mode"
-    else
-        echo "Warning: could not switch to iptables-legacy — cluster networking may fail"
-    fi
+	echo "iptables nf_tables xt extension bridge unavailable — switching to iptables-legacy"
+	if update-alternatives --set iptables /usr/sbin/iptables-legacy 2>/dev/null &&
+		update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy 2>/dev/null; then
+		echo "Now using iptables-legacy mode"
+	else
+		echo "Warning: could not switch to iptables-legacy — cluster networking may fail"
+	fi
 fi
 
 IPTABLES=$([ "${USE_IPTABLES_LEGACY:-0}" = "1" ] && echo iptables-legacy || echo iptables)
@@ -83,33 +83,33 @@ IPTABLES=$([ "${USE_IPTABLES_LEGACY:-0}" = "1" ] && echo iptables-legacy || echo
 RESOLV_CONF="/etc/rancher/k3s/resolv.conf"
 
 has_default_route() {
-    ip -4 route show default 2>/dev/null | grep -q '^default ' \
-        || ip -6 route show default 2>/dev/null | grep -q '^default '
+	ip -4 route show default 2>/dev/null | grep -q '^default ' ||
+		ip -6 route show default 2>/dev/null | grep -q '^default '
 }
 
 wait_for_default_route() {
-    attempts=${1:-30}
-    delay_s=${2:-1}
-    i=1
+	attempts=${1:-30}
+	delay_s=${2:-1}
+	i=1
 
-    while [ "$i" -le "$attempts" ]; do
-        if has_default_route; then
-            return 0
-        fi
-        sleep "$delay_s"
-        i=$((i + 1))
-    done
+	while [ "$i" -le "$attempts" ]; do
+		if has_default_route; then
+			return 0
+		fi
+		sleep "$delay_s"
+		i=$((i + 1))
+	done
 
-    echo "Error: no default route present before starting k3s"
-    echo "IPv4 routes:"
-    ip -4 route show 2>/dev/null || true
-    echo "IPv6 routes:"
-    ip -6 route show 2>/dev/null || true
-    echo "/proc/net/route:"
-    cat /proc/net/route 2>/dev/null || true
-    echo "/proc/net/ipv6_route:"
-    cat /proc/net/ipv6_route 2>/dev/null || true
-    return 1
+	echo "Error: no default route present before starting k3s"
+	echo "IPv4 routes:"
+	ip -4 route show 2>/dev/null || true
+	echo "IPv6 routes:"
+	ip -6 route show 2>/dev/null || true
+	echo "/proc/net/route:"
+	cat /proc/net/route 2>/dev/null || true
+	echo "/proc/net/ipv6_route:"
+	cat /proc/net/ipv6_route 2>/dev/null || true
+	return 1
 }
 
 # ---------------------------------------------------------------------------
@@ -125,50 +125,50 @@ wait_for_default_route() {
 #   4. Writing that IP into the k3s resolv.conf
 
 setup_dns_proxy() {
-    # Extract Docker's actual DNS listener ports from the DOCKER_OUTPUT chain.
-    # Docker sets up rules like:
-    #   -A DOCKER_OUTPUT -d 127.0.0.11/32 -p udp --dport 53 -j DNAT --to-destination 127.0.0.11:<port>
-    #   -A DOCKER_OUTPUT -d 127.0.0.11/32 -p tcp --dport 53 -j DNAT --to-destination 127.0.0.11:<port>
-    UDP_PORT=$($IPTABLES -t nat -S DOCKER_OUTPUT 2>/dev/null \
-        | grep -- '-p udp.*--dport 53' \
-        | sed -n 's/.*--to-destination 127.0.0.11:\([0-9]*\).*/\1/p' \
-        | head -1)
-    TCP_PORT=$($IPTABLES -t nat -S DOCKER_OUTPUT 2>/dev/null \
-        | grep -- '-p tcp.*--dport 53' \
-        | sed -n 's/.*--to-destination 127.0.0.11:\([0-9]*\).*/\1/p' \
-        | head -1)
+	# Extract Docker's actual DNS listener ports from the DOCKER_OUTPUT chain.
+	# Docker sets up rules like:
+	#   -A DOCKER_OUTPUT -d 127.0.0.11/32 -p udp --dport 53 -j DNAT --to-destination 127.0.0.11:<port>
+	#   -A DOCKER_OUTPUT -d 127.0.0.11/32 -p tcp --dport 53 -j DNAT --to-destination 127.0.0.11:<port>
+	UDP_PORT=$($IPTABLES -t nat -S DOCKER_OUTPUT 2>/dev/null |
+		grep -- '-p udp.*--dport 53' |
+		sed -n 's/.*--to-destination 127.0.0.11:\([0-9]*\).*/\1/p' |
+		head -1)
+	TCP_PORT=$($IPTABLES -t nat -S DOCKER_OUTPUT 2>/dev/null |
+		grep -- '-p tcp.*--dport 53' |
+		sed -n 's/.*--to-destination 127.0.0.11:\([0-9]*\).*/\1/p' |
+		head -1)
 
-    if [ -z "$UDP_PORT" ] || [ -z "$TCP_PORT" ]; then
-        echo "Warning: Could not discover Docker DNS ports from iptables"
-        echo "  UDP_PORT=${UDP_PORT:-<not found>}  TCP_PORT=${TCP_PORT:-<not found>}"
-        return 1
-    fi
+	if [ -z "$UDP_PORT" ] || [ -z "$TCP_PORT" ]; then
+		echo "Warning: Could not discover Docker DNS ports from iptables"
+		echo "  UDP_PORT=${UDP_PORT:-<not found>}  TCP_PORT=${TCP_PORT:-<not found>}"
+		return 1
+	fi
 
-    # Get the container's routable (non-loopback) IP
-    CONTAINER_IP=$(ip -4 addr show eth0 2>/dev/null \
-        | awk '/inet /{print $2}' | cut -d/ -f1 | head -1)
+	# Get the container's routable (non-loopback) IP
+	CONTAINER_IP=$(ip -4 addr show eth0 2>/dev/null |
+		awk '/inet /{print $2}' | cut -d/ -f1 | head -1)
 
-    if [ -z "$CONTAINER_IP" ]; then
-        echo "Warning: Could not determine container IP from eth0"
-        return 1
-    fi
+	if [ -z "$CONTAINER_IP" ]; then
+		echo "Warning: Could not determine container IP from eth0"
+		return 1
+	fi
 
-    echo "Setting up DNS proxy: ${CONTAINER_IP}:53 -> 127.0.0.11 (udp:${UDP_PORT}, tcp:${TCP_PORT})"
+	echo "Setting up DNS proxy: ${CONTAINER_IP}:53 -> 127.0.0.11 (udp:${UDP_PORT}, tcp:${TCP_PORT})"
 
-    # Forward DNS from pods (PREROUTING) and local processes (OUTPUT) to Docker's DNS
-    $IPTABLES -t nat -I PREROUTING -p udp --dport 53 -d "$CONTAINER_IP" -j DNAT \
-        --to-destination "127.0.0.11:${UDP_PORT}"
-    $IPTABLES -t nat -I PREROUTING -p tcp --dport 53 -d "$CONTAINER_IP" -j DNAT \
-        --to-destination "127.0.0.11:${TCP_PORT}"
+	# Forward DNS from pods (PREROUTING) and local processes (OUTPUT) to Docker's DNS
+	$IPTABLES -t nat -I PREROUTING -p udp --dport 53 -d "$CONTAINER_IP" -j DNAT \
+		--to-destination "127.0.0.11:${UDP_PORT}"
+	$IPTABLES -t nat -I PREROUTING -p tcp --dport 53 -d "$CONTAINER_IP" -j DNAT \
+		--to-destination "127.0.0.11:${TCP_PORT}"
 
-    echo "nameserver $CONTAINER_IP" > "$RESOLV_CONF"
-    echo "Configured k3s DNS to use ${CONTAINER_IP} (proxied to Docker DNS)"
+	echo "nameserver $CONTAINER_IP" >"$RESOLV_CONF"
+	echo "Configured k3s DNS to use ${CONTAINER_IP} (proxied to Docker DNS)"
 }
 
 if ! setup_dns_proxy; then
-    echo "DNS proxy setup failed, falling back to public DNS servers"
-    echo "Note: this may not work on Docker Desktop (Mac/Windows)"
-    cat > "$RESOLV_CONF" <<EOF
+	echo "DNS proxy setup failed, falling back to public DNS servers"
+	echo "Note: this may not work on Docker Desktop (Mac/Windows)"
+	cat >"$RESOLV_CONF" <<EOF
 nameserver 8.8.8.8
 nameserver 8.8.4.4
 EOF
@@ -185,46 +185,46 @@ fi
 # optional port suffix.  When the registry host is an IP literal, DNS
 # resolution is not required and we should skip the nslookup probe.
 is_ip_literal() {
-    # Strip an optional :port suffix
-    local host="${1%:*}"
-    # IPv4: digits and dots only
-    echo "$host" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' && return 0
-    # IPv6 (bare or bracketed)
-    echo "$host" | grep -qE '^\[?[0-9a-fA-F:]+\]?$' && return 0
-    return 1
+	# Strip an optional :port suffix
+	local host="${1%:*}"
+	# IPv4: digits and dots only
+	echo "$host" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$' && return 0
+	# IPv6 (bare or bracketed)
+	echo "$host" | grep -qE '^\[?[0-9a-fA-F:]+\]?$' && return 0
+	return 1
 }
 
 verify_dns() {
-    local dns_target="${REGISTRY_HOST:-ghcr.io}"
+	local dns_target="${REGISTRY_HOST:-ghcr.io}"
 
-    # IP-literal registry hosts (e.g. 127.0.0.1:5000) don't need DNS.
-    if is_ip_literal "$dns_target"; then
-        echo "Registry host is an IP literal ($dns_target), skipping DNS probe"
-        return 0
-    fi
+	# IP-literal registry hosts (e.g. 127.0.0.1:5000) don't need DNS.
+	if is_ip_literal "$dns_target"; then
+		echo "Registry host is an IP literal ($dns_target), skipping DNS probe"
+		return 0
+	fi
 
-    # Strip port suffix — nslookup doesn't understand host:port.
-    local lookup_host="${dns_target%%:*}"
+	# Strip port suffix — nslookup doesn't understand host:port.
+	local lookup_host="${dns_target%%:*}"
 
-    local attempts=5
-    local i=1
-    while [ "$i" -le "$attempts" ]; do
-        if nslookup "$lookup_host" >/dev/null 2>&1; then
-            return 0
-        fi
-        sleep 1
-        i=$((i + 1))
-    done
-    return 1
+	local attempts=5
+	local i=1
+	while [ "$i" -le "$attempts" ]; do
+		if nslookup "$lookup_host" >/dev/null 2>&1; then
+			return 0
+		fi
+		sleep 1
+		i=$((i + 1))
+	done
+	return 1
 }
 
 if ! verify_dns; then
-    echo "DNS_PROBE_FAILED: cannot resolve ${REGISTRY_HOST:-ghcr.io} after DNS proxy setup"
-    echo "  resolv.conf: $(cat "$RESOLV_CONF")"
-    echo "  This usually means Docker DNS forwarding is broken."
-    echo "  Try restarting Docker or pruning networks: docker network prune -f"
-    # Don't exit — let k3s start so the Rust-side polling loop can detect the
-    # failure via the log marker and present a user-friendly diagnosis.
+	echo "DNS_PROBE_FAILED: cannot resolve ${REGISTRY_HOST:-ghcr.io} after DNS proxy setup"
+	echo "  resolv.conf: $(cat "$RESOLV_CONF")"
+	echo "  This usually means Docker DNS forwarding is broken."
+	echo "  Try restarting Docker or pruning networks: docker network prune -f"
+	# Don't exit — let k3s start so the Rust-side polling loop can detect the
+	# failure via the log marker and present a user-friendly diagnosis.
 fi
 
 # ---------------------------------------------------------------------------
@@ -235,15 +235,15 @@ fi
 # Credentials are passed as environment variables by the bootstrap code.
 REGISTRIES_YAML="/etc/rancher/k3s/registries.yaml"
 if [ -n "${REGISTRY_HOST:-}" ]; then
-    REGISTRY_SCHEME="https"
-    REGISTRY_ENDPOINT="${REGISTRY_ENDPOINT:-${REGISTRY_HOST}}"
-    insecure_value=$(printf '%s' "${REGISTRY_INSECURE:-false}" | tr '[:upper:]' '[:lower:]')
-    if [ "$insecure_value" = "true" ] || [ "$insecure_value" = "1" ] || [ "$insecure_value" = "yes" ] || [ "$insecure_value" = "on" ]; then
-        REGISTRY_SCHEME="http"
-    fi
+	REGISTRY_SCHEME="https"
+	REGISTRY_ENDPOINT="${REGISTRY_ENDPOINT:-${REGISTRY_HOST}}"
+	insecure_value=$(printf '%s' "${REGISTRY_INSECURE:-false}" | tr '[:upper:]' '[:lower:]')
+	if [ "$insecure_value" = "true" ] || [ "$insecure_value" = "1" ] || [ "$insecure_value" = "yes" ] || [ "$insecure_value" = "on" ]; then
+		REGISTRY_SCHEME="http"
+	fi
 
-    echo "Configuring registry mirror for ${REGISTRY_HOST} via ${REGISTRY_ENDPOINT} (${REGISTRY_SCHEME})"
-    cat > "$REGISTRIES_YAML" <<REGEOF
+	echo "Configuring registry mirror for ${REGISTRY_HOST} via ${REGISTRY_ENDPOINT} (${REGISTRY_SCHEME})"
+	cat >"$REGISTRIES_YAML" <<REGEOF
 mirrors:
   "${REGISTRY_HOST}":
     endpoint:
@@ -251,20 +251,20 @@ mirrors:
 
 REGEOF
 
-    # If the community registry is a separate host (e.g. we're using a
-    # local registry for component images), add it as an additional mirror
-    # so community sandbox images can be pulled at runtime.
-    if [ -n "${COMMUNITY_REGISTRY_HOST:-}" ] && [ "${COMMUNITY_REGISTRY_HOST}" != "${REGISTRY_HOST}" ]; then
-        echo "Adding community registry mirror for ${COMMUNITY_REGISTRY_HOST}"
-        cat >> "$REGISTRIES_YAML" <<REGEOF
+	# If the community registry is a separate host (e.g. we're using a
+	# local registry for component images), add it as an additional mirror
+	# so community sandbox images can be pulled at runtime.
+	if [ -n "${COMMUNITY_REGISTRY_HOST:-}" ] && [ "${COMMUNITY_REGISTRY_HOST}" != "${REGISTRY_HOST}" ]; then
+		echo "Adding community registry mirror for ${COMMUNITY_REGISTRY_HOST}"
+		cat >>"$REGISTRIES_YAML" <<REGEOF
   "${COMMUNITY_REGISTRY_HOST}":
     endpoint:
       - "https://${COMMUNITY_REGISTRY_HOST}"
 REGEOF
-    fi
+	fi
 
-    if [ -n "${REGISTRY_USERNAME:-}" ] && [ -n "${REGISTRY_PASSWORD:-}" ]; then
-        cat >> "$REGISTRIES_YAML" <<REGEOF
+	if [ -n "${REGISTRY_USERNAME:-}" ] && [ -n "${REGISTRY_PASSWORD:-}" ]; then
+		cat >>"$REGISTRIES_YAML" <<REGEOF
 
 configs:
   "${REGISTRY_HOST}":
@@ -272,23 +272,23 @@ configs:
       username: ${REGISTRY_USERNAME}
       password: ${REGISTRY_PASSWORD}
 REGEOF
-    fi
+	fi
 
-    # Add auth for the community registry when it differs from the
-    # primary registry (community sandbox images live there).
-    if [ -n "${COMMUNITY_REGISTRY_HOST:-}" ] && [ "${COMMUNITY_REGISTRY_HOST}" != "${REGISTRY_HOST}" ] \
-       && [ -n "${COMMUNITY_REGISTRY_USERNAME:-}" ] && [ -n "${COMMUNITY_REGISTRY_PASSWORD:-}" ]; then
-        # Append to existing configs block or start a new one.
-        if [ -n "${REGISTRY_USERNAME:-}" ] && [ -n "${REGISTRY_PASSWORD:-}" ]; then
-            # configs: block already started above — just append the entry.
-            cat >> "$REGISTRIES_YAML" <<REGEOF
+	# Add auth for the community registry when it differs from the
+	# primary registry (community sandbox images live there).
+	if [ -n "${COMMUNITY_REGISTRY_HOST:-}" ] && [ "${COMMUNITY_REGISTRY_HOST}" != "${REGISTRY_HOST}" ] &&
+		[ -n "${COMMUNITY_REGISTRY_USERNAME:-}" ] && [ -n "${COMMUNITY_REGISTRY_PASSWORD:-}" ]; then
+		# Append to existing configs block or start a new one.
+		if [ -n "${REGISTRY_USERNAME:-}" ] && [ -n "${REGISTRY_PASSWORD:-}" ]; then
+			# configs: block already started above — just append the entry.
+			cat >>"$REGISTRIES_YAML" <<REGEOF
   "${COMMUNITY_REGISTRY_HOST}":
     auth:
       username: ${COMMUNITY_REGISTRY_USERNAME}
       password: ${COMMUNITY_REGISTRY_PASSWORD}
 REGEOF
-        else
-            cat >> "$REGISTRIES_YAML" <<REGEOF
+		else
+			cat >>"$REGISTRIES_YAML" <<REGEOF
 
 configs:
   "${COMMUNITY_REGISTRY_HOST}":
@@ -296,10 +296,10 @@ configs:
       username: ${COMMUNITY_REGISTRY_USERNAME}
       password: ${COMMUNITY_REGISTRY_PASSWORD}
 REGEOF
-        fi
-    fi
+		fi
+	fi
 else
-    echo "Warning: REGISTRY_HOST not set; skipping registry config"
+	echo "Warning: REGISTRY_HOST not set; skipping registry config"
 fi
 
 # Copy bundled Helm chart tarballs to the k3s static charts directory.
@@ -312,23 +312,23 @@ BUNDLED_CHARTS="/opt/openshell/charts"
 CHART_CHECKSUM=""
 
 if [ -d "$BUNDLED_CHARTS" ]; then
-    echo "Copying bundled charts to k3s..."
-    for chart in "$BUNDLED_CHARTS"/*.tgz; do
-        [ ! -f "$chart" ] && continue
-        cp "$chart" "$K3S_CHARTS/"
-    done
-    # Compute a checksum of the openshell chart so we can inject it into the
-    # HelmChart manifest below. When the chart content changes between image
-    # versions the checksum changes, which modifies the HelmChart CR spec and
-    # forces the k3s Helm controller to re-install.
-    OPENSHELL_CHART="$BUNDLED_CHARTS/openshell-0.1.0.tgz"
-    if [ -f "$OPENSHELL_CHART" ]; then
-        if command -v sha256sum >/dev/null 2>&1; then
-            CHART_CHECKSUM=$(sha256sum "$OPENSHELL_CHART" | cut -d ' ' -f 1)
-        elif command -v shasum >/dev/null 2>&1; then
-            CHART_CHECKSUM=$(shasum -a 256 "$OPENSHELL_CHART" | cut -d ' ' -f 1)
-        fi
-    fi
+	echo "Copying bundled charts to k3s..."
+	for chart in "$BUNDLED_CHARTS"/*.tgz; do
+		[ ! -f "$chart" ] && continue
+		cp "$chart" "$K3S_CHARTS/"
+	done
+	# Compute a checksum of the openshell chart so we can inject it into the
+	# HelmChart manifest below. When the chart content changes between image
+	# versions the checksum changes, which modifies the HelmChart CR spec and
+	# forces the k3s Helm controller to re-install.
+	OPENSHELL_CHART="$BUNDLED_CHARTS/openshell-0.1.0.tgz"
+	if [ -f "$OPENSHELL_CHART" ]; then
+		if command -v sha256sum >/dev/null 2>&1; then
+			CHART_CHECKSUM=$(sha256sum "$OPENSHELL_CHART" | cut -d ' ' -f 1)
+		elif command -v shasum >/dev/null 2>&1; then
+			CHART_CHECKSUM=$(shasum -a 256 "$OPENSHELL_CHART" | cut -d ' ' -f 1)
+		fi
+	fi
 fi
 
 # Copy bundled manifests to k3s manifests directory.
@@ -343,25 +343,25 @@ K3S_MANIFESTS="/var/lib/rancher/k3s/server/manifests"
 BUNDLED_MANIFESTS="/opt/openshell/manifests"
 
 if [ -d "$BUNDLED_MANIFESTS" ]; then
-    echo "Copying bundled manifests to k3s..."
-    for manifest in "$BUNDLED_MANIFESTS"/*.yaml; do
-        [ ! -f "$manifest" ] && continue
-        cp "$manifest" "$K3S_MANIFESTS/"
-    done
+	echo "Copying bundled manifests to k3s..."
+	for manifest in "$BUNDLED_MANIFESTS"/*.yaml; do
+		[ ! -f "$manifest" ] && continue
+		cp "$manifest" "$K3S_MANIFESTS/"
+	done
 
-    # Remove openshell-managed manifests that are no longer bundled.
-    # Only clean up files that look like openshell manifests (openshell-* or
-    # envoy-gateway-* or agent-*) to avoid removing built-in k3s manifests.
-    for existing in "$K3S_MANIFESTS"/openshell-*.yaml \
-                    "$K3S_MANIFESTS"/envoy-gateway-*.yaml \
-                    "$K3S_MANIFESTS"/agent-*.yaml; do
-        [ ! -f "$existing" ] && continue
-        basename=$(basename "$existing")
-        if [ ! -f "$BUNDLED_MANIFESTS/$basename" ]; then
-            echo "Removing stale manifest: $basename"
-            rm -f "$existing"
-        fi
-    done
+	# Remove openshell-managed manifests that are no longer bundled.
+	# Only clean up files that look like openshell manifests (openshell-* or
+	# envoy-gateway-* or agent-*) to avoid removing built-in k3s manifests.
+	for existing in "$K3S_MANIFESTS"/openshell-*.yaml \
+		"$K3S_MANIFESTS"/envoy-gateway-*.yaml \
+		"$K3S_MANIFESTS"/agent-*.yaml; do
+		[ ! -f "$existing" ] && continue
+		basename=$(basename "$existing")
+		if [ ! -f "$BUNDLED_MANIFESTS/$basename" ]; then
+			echo "Removing stale manifest: $basename"
+			rm -f "$existing"
+		fi
+	done
 fi
 
 # ---------------------------------------------------------------------------
@@ -373,36 +373,41 @@ fi
 # The nvidia-container-runtime binary is already on PATH (baked into the image)
 # so k3s registers the "nvidia" RuntimeClass at startup.
 if [ "${GPU_ENABLED:-}" = "true" ]; then
-    echo "GPU support enabled — deploying NVIDIA device plugin"
+	echo "GPU support enabled — deploying NVIDIA device plugin"
 
-    GPU_MANIFESTS="/opt/openshell/gpu-manifests"
-    if [ -d "$GPU_MANIFESTS" ]; then
-        for manifest in "$GPU_MANIFESTS"/*.yaml; do
-            [ ! -f "$manifest" ] && continue
-            cp "$manifest" "$K3S_MANIFESTS/"
-        done
-    fi
+	GPU_MANIFESTS="/opt/openshell/gpu-manifests"
+	if [ -d "$GPU_MANIFESTS" ]; then
+		for manifest in "$GPU_MANIFESTS"/*.yaml; do
+			[ ! -f "$manifest" ] && continue
+			cp "$manifest" "$K3S_MANIFESTS/"
+		done
+	fi
 fi
 
 # ---------------------------------------------------------------------------
 # Detect host gateway IP for sandbox pod hostAliases
 # ---------------------------------------------------------------------------
-# Sandbox pods need to reach services running on the Docker host (e.g.
+# Sandbox pods need to reach services running on the container host (e.g.
 # provider endpoints during local development). On Docker Desktop,
 # host.docker.internal resolves to a special host-reachable IP that is NOT the
-# bridge default gateway, so prefer Docker's own resolution when available.
-# Fall back to the container default gateway on Linux engines where
-# host.docker.internal commonly maps to the bridge gateway anyway.
+# bridge default gateway. Podman uses host.containers.internal for the same
+# purpose. Try both, then fall back to the container default gateway on Linux
+# engines where the host alias commonly maps to the bridge gateway anyway.
 HOST_GATEWAY_IP=$(getent ahostsv4 host.docker.internal 2>/dev/null | awk 'NR == 1 { print $1; exit }')
 if [ -n "$HOST_GATEWAY_IP" ]; then
-    echo "Detected host gateway IP from host.docker.internal: $HOST_GATEWAY_IP"
+	echo "Detected host gateway IP from host.docker.internal: $HOST_GATEWAY_IP"
 else
-    HOST_GATEWAY_IP=$(ip -4 route | awk '/default/ { print $3; exit }')
-    if [ -n "$HOST_GATEWAY_IP" ]; then
-        echo "Detected host gateway IP from default route: $HOST_GATEWAY_IP"
-    else
-        echo "Warning: Could not detect host gateway IP from host.docker.internal or default route"
-    fi
+	HOST_GATEWAY_IP=$(getent ahostsv4 host.containers.internal 2>/dev/null | awk 'NR == 1 { print $1; exit }')
+	if [ -n "$HOST_GATEWAY_IP" ]; then
+		echo "Detected host gateway IP from host.containers.internal: $HOST_GATEWAY_IP"
+	else
+		HOST_GATEWAY_IP=$(ip -4 route | awk '/default/ { print $3; exit }')
+		if [ -n "$HOST_GATEWAY_IP" ]; then
+			echo "Detected host gateway IP from default route: $HOST_GATEWAY_IP"
+		else
+			echo "Warning: Could not detect host gateway IP from host aliases or default route"
+		fi
+	fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -415,9 +420,9 @@ fi
 HELMCHART="/var/lib/rancher/k3s/server/manifests/openshell-helmchart.yaml"
 
 if [ -n "${IMAGE_REPO_BASE:-}" ] && [ -f "$HELMCHART" ]; then
-    echo "Setting image repository base: ${IMAGE_REPO_BASE}"
-    sed -i -E "s|repository:[[:space:]]*[^[:space:]]+|repository: ${IMAGE_REPO_BASE}/gateway|" "$HELMCHART"
-    # Sandbox images come from the community registry — do not override
+	echo "Setting image repository base: ${IMAGE_REPO_BASE}"
+	sed -i -E "s|repository:[[:space:]]*[^[:space:]]+|repository: ${IMAGE_REPO_BASE}/gateway|" "$HELMCHART"
+	# Sandbox images come from the community registry — do not override
 fi
 
 # In push mode, use the exact image references that were imported into cluster
@@ -425,36 +430,36 @@ fi
 # Only the gateway image is pushed; sandbox images are pulled from the
 # community registry at runtime.
 if [ -n "${PUSH_IMAGE_REFS:-}" ] && [ -f "$HELMCHART" ]; then
-    server_image=""
-    old_ifs="$IFS"
-    IFS=','
-    for ref in $PUSH_IMAGE_REFS; do
-        case "$ref" in
-            */gateway:*) server_image="$ref" ;;
-        esac
-    done
-    IFS="$old_ifs"
+	server_image=""
+	old_ifs="$IFS"
+	IFS=','
+	for ref in $PUSH_IMAGE_REFS; do
+		case "$ref" in
+		*/gateway:*) server_image="$ref" ;;
+		esac
+	done
+	IFS="$old_ifs"
 
-    if [ -n "$server_image" ]; then
-        server_repo="${server_image%:*}"
-        server_tag="${server_image##*:}"
-        echo "Setting server image repository: ${server_repo}"
-        echo "Setting server image tag: ${server_tag}"
-        sed -i -E "s|repository:[[:space:]]*[^[:space:]]+|repository: ${server_repo}|" "$HELMCHART"
-        sed -i -E "s|tag:[[:space:]]*\"?[^\"[:space:]]+\"?|tag: \"${server_tag}\"|" "$HELMCHART"
-    fi
+	if [ -n "$server_image" ]; then
+		server_repo="${server_image%:*}"
+		server_tag="${server_image##*:}"
+		echo "Setting server image repository: ${server_repo}"
+		echo "Setting server image tag: ${server_tag}"
+		sed -i -E "s|repository:[[:space:]]*[^[:space:]]+|repository: ${server_repo}|" "$HELMCHART"
+		sed -i -E "s|tag:[[:space:]]*\"?[^\"[:space:]]+\"?|tag: \"${server_tag}\"|" "$HELMCHART"
+	fi
 fi
 
 if [ -n "${IMAGE_TAG:-}" ] && [ -f "$HELMCHART" ]; then
-    echo "Overriding gateway image tag to: ${IMAGE_TAG}"
-    # server image tag (standalone value field)
-    # Handle both quoted and unquoted defaults: tag: "latest" / tag: latest
-    sed -i -E "s|tag:[[:space:]]*\"?latest\"?|tag: \"${IMAGE_TAG}\"|" "$HELMCHART"
+	echo "Overriding gateway image tag to: ${IMAGE_TAG}"
+	# server image tag (standalone value field)
+	# Handle both quoted and unquoted defaults: tag: "latest" / tag: latest
+	sed -i -E "s|tag:[[:space:]]*\"?latest\"?|tag: \"${IMAGE_TAG}\"|" "$HELMCHART"
 fi
 
 if [ -n "${IMAGE_PULL_POLICY:-}" ] && [ -f "$HELMCHART" ]; then
-    echo "Overriding image pull policy to: ${IMAGE_PULL_POLICY}"
-    sed -i "s|pullPolicy: Always|pullPolicy: ${IMAGE_PULL_POLICY}|" "$HELMCHART"
+	echo "Overriding image pull policy to: ${IMAGE_PULL_POLICY}"
+	sed -i "s|pullPolicy: Always|pullPolicy: ${IMAGE_PULL_POLICY}|" "$HELMCHART"
 fi
 
 # SSH handshake secret: previously generated here and injected via sed into the
@@ -465,60 +470,60 @@ fi
 # Inject SSH gateway host/port into the HelmChart manifest so the openshell
 # server returns the correct address to CLI clients for SSH proxy CONNECT.
 if [ -f "$HELMCHART" ]; then
-    if [ -n "$SSH_GATEWAY_HOST" ]; then
-        echo "Setting SSH gateway host: $SSH_GATEWAY_HOST"
-        sed -i "s|__SSH_GATEWAY_HOST__|${SSH_GATEWAY_HOST}|g" "$HELMCHART"
-    else
-        # Clear the placeholder so the default (127.0.0.1) is used
-        sed -i "s|sshGatewayHost: __SSH_GATEWAY_HOST__|sshGatewayHost: \"\"|g" "$HELMCHART"
-    fi
-    if [ -n "$SSH_GATEWAY_PORT" ]; then
-        echo "Setting SSH gateway port: $SSH_GATEWAY_PORT"
-        sed -i "s|__SSH_GATEWAY_PORT__|${SSH_GATEWAY_PORT}|g" "$HELMCHART"
-    else
-        # Clear the placeholder so the default (8080) is used
-        sed -i "s|sshGatewayPort: __SSH_GATEWAY_PORT__|sshGatewayPort: 0|g" "$HELMCHART"
-    fi
-    # Disable gateway auth: when set, the server accepts connections without
-    # client certificates (for reverse-proxy / Cloudflare Tunnel deployments).
-    if [ "${DISABLE_GATEWAY_AUTH:-}" = "true" ]; then
-        echo "Disabling gateway auth (mTLS client cert not required)"
-        sed -i "s|__DISABLE_GATEWAY_AUTH__|true|g" "$HELMCHART"
-    else
-        sed -i "s|__DISABLE_GATEWAY_AUTH__|false|g" "$HELMCHART"
-    fi
+	if [ -n "$SSH_GATEWAY_HOST" ]; then
+		echo "Setting SSH gateway host: $SSH_GATEWAY_HOST"
+		sed -i "s|__SSH_GATEWAY_HOST__|${SSH_GATEWAY_HOST}|g" "$HELMCHART"
+	else
+		# Clear the placeholder so the default (127.0.0.1) is used
+		sed -i "s|sshGatewayHost: __SSH_GATEWAY_HOST__|sshGatewayHost: \"\"|g" "$HELMCHART"
+	fi
+	if [ -n "$SSH_GATEWAY_PORT" ]; then
+		echo "Setting SSH gateway port: $SSH_GATEWAY_PORT"
+		sed -i "s|__SSH_GATEWAY_PORT__|${SSH_GATEWAY_PORT}|g" "$HELMCHART"
+	else
+		# Clear the placeholder so the default (8080) is used
+		sed -i "s|sshGatewayPort: __SSH_GATEWAY_PORT__|sshGatewayPort: 0|g" "$HELMCHART"
+	fi
+	# Disable gateway auth: when set, the server accepts connections without
+	# client certificates (for reverse-proxy / Cloudflare Tunnel deployments).
+	if [ "${DISABLE_GATEWAY_AUTH:-}" = "true" ]; then
+		echo "Disabling gateway auth (mTLS client cert not required)"
+		sed -i "s|__DISABLE_GATEWAY_AUTH__|true|g" "$HELMCHART"
+	else
+		sed -i "s|__DISABLE_GATEWAY_AUTH__|false|g" "$HELMCHART"
+	fi
 
-    # Disable TLS entirely: the server listens on plaintext HTTP.
-    # Used when a reverse proxy / tunnel terminates TLS at the edge.
-    if [ "${DISABLE_TLS:-}" = "true" ]; then
-        echo "Disabling TLS (plaintext HTTP)"
-        sed -i "s|__DISABLE_TLS__|true|g" "$HELMCHART"
-        # The Helm template automatically rewrites https:// to http:// in
-        # OPENSHELL_GRPC_ENDPOINT when disableTls is true, so no sed needed here.
-    else
-        sed -i "s|__DISABLE_TLS__|false|g" "$HELMCHART"
-    fi
+	# Disable TLS entirely: the server listens on plaintext HTTP.
+	# Used when a reverse proxy / tunnel terminates TLS at the edge.
+	if [ "${DISABLE_TLS:-}" = "true" ]; then
+		echo "Disabling TLS (plaintext HTTP)"
+		sed -i "s|__DISABLE_TLS__|true|g" "$HELMCHART"
+		# The Helm template automatically rewrites https:// to http:// in
+		# OPENSHELL_GRPC_ENDPOINT when disableTls is true, so no sed needed here.
+	else
+		sed -i "s|__DISABLE_TLS__|false|g" "$HELMCHART"
+	fi
 fi
 
 # Inject host gateway IP into the HelmChart manifest so sandbox pods can
 # reach services on the Docker host via host.docker.internal / host.openshell.internal.
 if [ -n "$HOST_GATEWAY_IP" ] && [ -f "$HELMCHART" ]; then
-    echo "Setting host gateway IP: $HOST_GATEWAY_IP"
-    sed -i "s|__HOST_GATEWAY_IP__|${HOST_GATEWAY_IP}|g" "$HELMCHART"
+	echo "Setting host gateway IP: $HOST_GATEWAY_IP"
+	sed -i "s|__HOST_GATEWAY_IP__|${HOST_GATEWAY_IP}|g" "$HELMCHART"
 else
-    # Clear the placeholder so the server gets an empty string (feature disabled)
-    sed -i "s|hostGatewayIP: __HOST_GATEWAY_IP__|hostGatewayIP: \"\"|g" "$HELMCHART"
+	# Clear the placeholder so the server gets an empty string (feature disabled)
+	sed -i "s|hostGatewayIP: __HOST_GATEWAY_IP__|hostGatewayIP: \"\"|g" "$HELMCHART"
 fi
 
 # Inject chart checksum into the HelmChart manifest so that a changed chart
 # tarball causes the HelmChart CR spec to differ, forcing the k3s Helm
 # controller to upgrade the release.
 if [ -n "$CHART_CHECKSUM" ] && [ -f "$HELMCHART" ]; then
-    echo "Injecting chart checksum: ${CHART_CHECKSUM}"
-    sed -i "s|__CHART_CHECKSUM__|${CHART_CHECKSUM}|g" "$HELMCHART"
+	echo "Injecting chart checksum: ${CHART_CHECKSUM}"
+	sed -i "s|__CHART_CHECKSUM__|${CHART_CHECKSUM}|g" "$HELMCHART"
 else
-    # Remove the placeholder line entirely so invalid YAML isn't left behind
-    sed -i '/__CHART_CHECKSUM__/d' "$HELMCHART"
+	# Remove the placeholder line entirely so invalid YAML isn't left behind
+	sed -i '/__CHART_CHECKSUM__/d' "$HELMCHART"
 fi
 
 # ---------------------------------------------------------------------------
@@ -543,15 +548,83 @@ mkdir -p /run/flannel
 # cgroup v1 support is no longer needed.
 EXTRA_KUBELET_ARGS=""
 if [ ! -f /sys/fs/cgroup/cgroup.controllers ]; then
-    echo "Detected cgroup v1 — adding kubelet compatibility flag (fail-cgroupv1=false)"
-    EXTRA_KUBELET_ARGS="--kubelet-arg=fail-cgroupv1=false"
+	echo "Detected cgroup v1 — adding kubelet compatibility flag (fail-cgroupv1=false)"
+	EXTRA_KUBELET_ARGS="--kubelet-arg=fail-cgroupv1=false"
+fi
+
+# ---------------------------------------------------------------------------
+# Detect user namespace (rootless container runtime)
+# ---------------------------------------------------------------------------
+# Rootless Podman and similar runtimes run inside a user namespace where
+# /dev/kmsg, /proc/self/oom_score_adj, and cgroup controllers are restricted.
+# Enable KubeletInUserNamespace so kubelet tolerates these restrictions.
+# Note: k3s --rootless is NOT suitable here — it is designed for running k3s
+# as a non-root user on the host, not inside an already-rootless container.
+if [ -r /proc/self/uid_map ]; then
+	_inner_uid=$(awk 'NR==1{print $1}' /proc/self/uid_map)
+	_outer_uid=$(awk 'NR==1{print $2}' /proc/self/uid_map)
+	if [ "$_inner_uid" = "0" ] && [ "$_outer_uid" != "0" ]; then
+		echo "Detected user namespace (rootless container) — enabling KubeletInUserNamespace"
+		EXTRA_KUBELET_ARGS="$EXTRA_KUBELET_ARGS --kubelet-arg=feature-gates=KubeletInUserNamespace=true"
+		# Force kubelet to create kubepods under the cgroup root (/sys/fs/cgroup/)
+		# rather than under the entrypoint's own cgroup. The entrypoint moves
+		# itself to /sys/fs/cgroup/init/ to satisfy the cgroup v2 "no internal
+		# process" constraint when enabling controllers in subtree_control.
+		# Without this, kubelet inherits the init/ cgroup and creates kubepods
+		# there, where subtree_control has not been configured.
+		EXTRA_KUBELET_ARGS="$EXTRA_KUBELET_ARGS --kubelet-arg=cgroup-root=/"
+
+		# k3s requires IP forwarding. In rootless containers the sysctl
+		# may default to 0 since the network namespace is isolated.
+		if [ "$(cat /proc/sys/net/ipv4/ip_forward 2>/dev/null)" = "0" ]; then
+			echo 1 >/proc/sys/net/ipv4/ip_forward 2>/dev/null || true
+		fi
+
+		# With private cgroupns, the root cgroup has processes (PID 1, etc.)
+		# which prevents enabling memory/io controllers in subtree_control
+		# (cgroup v2 "no internal process" constraint). Move all root
+		# processes to an init child cgroup, then enable all controllers.
+		if [ -f /sys/fs/cgroup/cgroup.subtree_control ]; then
+			mkdir -p /sys/fs/cgroup/init 2>/dev/null || true
+			# Move all processes from root cgroup to init child
+			while read -r _pid; do
+				echo "$_pid" >/sys/fs/cgroup/init/cgroup.procs 2>/dev/null || true
+			done </sys/fs/cgroup/cgroup.procs
+			# Now enable all controllers in the root subtree_control
+			for _ctrl in cpuset cpu io memory pids; do
+				echo "+$_ctrl" >/sys/fs/cgroup/cgroup.subtree_control 2>/dev/null || true
+			done
+		fi
+
+		# Rootless containers need cgroup v2 delegation from the host so
+		# k3s can create its cgroup hierarchy (kubepods, besteffort, etc.).
+		# Test by attempting to create and remove a probe directory.
+		if [ -d /sys/fs/cgroup ] && ! mkdir /sys/fs/cgroup/.k3s-probe 2>/dev/null; then
+			echo "" >&2
+			echo "Error: Cannot write to cgroup hierarchy (/sys/fs/cgroup)" >&2
+			echo "" >&2
+			echo "Rootless Podman requires the host to delegate cgroup controllers." >&2
+			echo "This is a one-time host setup (requires sudo):" >&2
+			echo "" >&2
+			echo "  sudo mkdir -p /etc/systemd/system/user@.service.d" >&2
+			echo "  sudo tee /etc/systemd/system/user@.service.d/delegate.conf <<'DEOF'" >&2
+			echo "  [Service]" >&2
+			echo "  Delegate=cpu cpuset io memory pids" >&2
+			echo "  DEOF" >&2
+			echo "  sudo systemctl daemon-reload" >&2
+			echo "" >&2
+			echo "Then log out and back in (or reboot)." >&2
+			exit 1
+		fi
+		rmdir /sys/fs/cgroup/.k3s-probe 2>/dev/null || true
+	fi
 fi
 
 # On kernels where xt_comment is unavailable, kube-router's network policy
 # controller panics at startup. Disable it when the iptables-legacy probe
 # triggered; sandbox isolation is enforced by the NSSH1 HMAC handshake instead.
 if [ "${USE_IPTABLES_LEGACY:-0}" = "1" ]; then
-    EXTRA_KUBELET_ARGS="$EXTRA_KUBELET_ARGS --disable-network-policy"
+	EXTRA_KUBELET_ARGS="$EXTRA_KUBELET_ARGS --disable-network-policy"
 fi
 
 # Docker Desktop can briefly start the container before its bridge default route
