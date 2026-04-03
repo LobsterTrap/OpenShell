@@ -56,6 +56,20 @@ jobs:
       - fedora-all
       - epel-10
 
+  # Build into maxamillion/openshell on every commit to midstream
+  # for continuous development and testing builds.
+  - job: copr_build
+    trigger: commit
+    branch: midstream
+    owner: "maxamillion"
+    project: "openshell"
+    identifier: midstream-commit
+    targets:
+      - fedora-all
+      - epel-10
+    preserve_project: true
+    list_on_homepage: true
+
   # Build on GitHub releases for publishable RPMs.
   # NOTE: Release builds are tag-based.  Only create GitHub releases from
   # tags on the midstream branch to ensure builds use midstream content.
