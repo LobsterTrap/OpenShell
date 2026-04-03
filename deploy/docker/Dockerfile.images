@@ -39,7 +39,7 @@ ENV TARGETARCH=$TARGETARCH \
     BUILDARCH=$BUILDARCH
 
 RUN dnf install -y fedora-repos && \
-    dnf install -y cmake gcc-c++ make protobuf-compiler curl && dnf clean all
+    dnf install -y cmake gcc-c++ make protobuf-compiler curl tar gzip && dnf clean all
 
 COPY deploy/docker/cross-build.sh /usr/local/bin/
 RUN . cross-build.sh && install_cross_toolchain && install_sccache && add_rust_target
@@ -212,7 +212,8 @@ FROM quay.io/hummingbird/core-runtime:latest-builder AS nvidia-container-toolkit
 USER root
 ARG NVIDIA_CONTAINER_TOOLKIT_VERSION
 
-RUN dnf install -y ca-certificates && \
+RUN dnf install -y fedora-repos ca-certificates && \
+    update-ca-trust && \
     curl -s -L https://nvidia.github.io/libnvidia-container/stable/rpm/nvidia-container-toolkit.repo \
         | tee /etc/yum.repos.d/nvidia-container-toolkit.repo && \
     dnf install -y \
