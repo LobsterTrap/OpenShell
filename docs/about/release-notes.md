@@ -29,7 +29,7 @@ NVIDIA OpenShell follows a frequent release cadence. Use the following GitHub re
 
 | Resource | Description |
 |---|---|
-| [Releases](https://github.com/NVIDIA/OpenShell/releases) | Versioned release notes and downloadable assets. |
-| [Release comparison](https://github.com/NVIDIA/OpenShell/compare) | Diff between any two tags or branches. |
-| [Merged pull requests](https://github.com/NVIDIA/OpenShell/pulls?q=is%3Apr+is%3Amerged) | Individual changes with review discussion. |
-| [Commit history](https://github.com/NVIDIA/OpenShell/commits/main) | Full commit log on `main`. |
+| [Releases](https://github.com/LobsterTrap/OpenShell/releases) | Versioned release notes and downloadable assets. |
+| [Release comparison](https://github.com/LobsterTrap/OpenShell/compare) | Diff between any two tags or branches. |
+| [Merged pull requests](https://github.com/LobsterTrap/OpenShell/pulls?q=is%3Apr+is%3Amerged) | Individual changes with review discussion. |
+| [Commit history](https://github.com/LobsterTrap/OpenShell/commits/main) | Full commit log on `main`. |

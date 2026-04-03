@@ -4,7 +4,7 @@ Substantial changes to OpenShell should be proposed in writing before implementa
 
 ## Start with a GitHub Discussion
 
-Before writing an RFC, consider opening a [GitHub Discussion](https://github.com/NVIDIA/OpenShell/discussions) to gauge interest and get early feedback. This helps:
+Before writing an RFC, consider opening a [GitHub Discussion](https://github.com/LobsterTrap/OpenShell/discussions) to gauge interest and get early feedback. This helps:
 
 - Validate that the problem is worth solving
 - Surface potential concerns early
@@ -60,8 +60,8 @@ authors:
   - "@username"
 state: draft
 links:
-  - https://github.com/NVIDIA/OpenShell/pull/123
-  - https://github.com/NVIDIA/OpenShell/discussions/456
+  - https://github.com/LobsterTrap/OpenShell/pull/123
+  - https://github.com/LobsterTrap/OpenShell/discussions/456
 ---
 ```
 

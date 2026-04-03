@@ -1,6 +1,6 @@
 # NVIDIA OpenShell
 
-[![License](https://img.shields.io/badge/License-Apache_2.0-blue)](https://github.com/NVIDIA/OpenShell/blob/main/LICENSE)
+[![License](https://img.shields.io/badge/License-Apache_2.0-blue)](https://github.com/LobsterTrap/OpenShell/blob/main/LICENSE)
 [![PyPI](https://img.shields.io/badge/PyPI-openshell-orange?logo=pypi)](https://pypi.org/project/openshell/)
 [![Security Policy](https://img.shields.io/badge/Security-Report%20a%20Vulnerability-red)](SECURITY.md)
 [![Documentation](https://img.shields.io/badge/docs-latest-brightgreen)](https://docs.nvidia.com/openshell/latest/index.html)
@@ -32,7 +32,7 @@ curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | 
 uv tool install -U openshell
 ```
 
-Both methods install the latest stable release by default. To install a specific version, set `OPENSHELL_VERSION` (binary) or pin the version with `uv tool install openshell==<version>`. A [`dev` release](https://github.com/NVIDIA/OpenShell/releases/tag/dev) is also available that tracks the latest commit on `main`.
+Both methods install the latest stable release by default. To install a specific version, set `OPENSHELL_VERSION` (binary) or pin the version with `uv tool install openshell==<version>`. A [`dev` release](https://github.com/LobsterTrap/OpenShell/releases/tag/dev) is also available that tracks the latest commit on `main`.
 
 ### Create a sandbox
 
@@ -130,7 +130,7 @@ openshell sandbox create --gpu --from [gpu-enabled-sandbox] -- claude
 
 The CLI auto-bootstraps a GPU-enabled gateway on first use, auto-selecting CDI when available and otherwise falling back to Docker's NVIDIA GPU request path (`--gpus all`). GPU intent is also inferred automatically for community images with `gpu` in the name.
 
-**Requirements:** NVIDIA drivers and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) must be installed on the host. The sandbox image itself must include the appropriate GPU drivers and libraries for your workload — the default `base` image does not. See the [BYOC example](https://github.com/NVIDIA/OpenShell/tree/main/examples/bring-your-own-container) for building a custom sandbox image with GPU support.
+**Requirements:** NVIDIA drivers and the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) must be installed on the host. The sandbox image itself must include the appropriate GPU drivers and libraries for your workload — the default `base` image does not. See the [BYOC example](https://github.com/LobsterTrap/OpenShell/tree/main/examples/bring-your-own-container) for building a custom sandbox image with GPU support.
 
 ## Supported Agents
 
@@ -157,7 +157,7 @@ The CLI auto-bootstraps a GPU-enabled gateway on first use, auto-selecting CDI w
 | `openshell logs [name] --tail`                             | Stream sandbox logs.                            |
 | `openshell term`                                           | Launch the real-time terminal UI for debugging. |
 
-See the full [CLI reference](https://github.com/NVIDIA/OpenShell/blob/main/docs/reference/cli.md) for all commands, flags, and environment variables.
+See the full [CLI reference](https://github.com/LobsterTrap/OpenShell/blob/main/docs/reference/cli.md) for all commands, flags, and environment variables.
 
 ## Terminal UI
 
@@ -183,14 +183,14 @@ openshell sandbox create --from ./my-sandbox-dir   # local Dockerfile
 openshell sandbox create --from registry.io/img:v1 # container image
 ```
 
-See the [community sandboxes](https://github.com/NVIDIA/OpenShell/blob/main/docs/sandboxes/community-sandboxes.md) catalog and the [BYOC example](https://github.com/NVIDIA/OpenShell/tree/main/examples/bring-your-own-container) for details.
+See the [community sandboxes](https://github.com/LobsterTrap/OpenShell/blob/main/docs/sandboxes/community-sandboxes.md) catalog and the [BYOC example](https://github.com/LobsterTrap/OpenShell/tree/main/examples/bring-your-own-container) for details.
 
 ## Explore with Your Agent
 
 Clone the repo and point your coding agent at it. The project includes agent skills that can answer questions, walk you through workflows, and diagnose problems — no issue filing required.
 
 ```bash
-git clone https://github.com/NVIDIA/OpenShell.git   # or git@github.com:NVIDIA/OpenShell.git
+git clone https://github.com/LobsterTrap/OpenShell.git   # or git@github.com:NVIDIA/OpenShell.git
 cd OpenShell
 # Point your agent here — it will discover the skills in .agents/skills/ automatically
 ```
@@ -210,18 +210,18 @@ All implementation work is human-gated — agents propose plans, humans approve,
 
 ## Getting Help
 
-- **Questions and discussion:** [GitHub Discussions](https://github.com/NVIDIA/OpenShell/discussions)
-- **Bug reports:** [GitHub Issues](https://github.com/NVIDIA/OpenShell/issues) — use the bug report template
+- **Questions and discussion:** [GitHub Discussions](https://github.com/LobsterTrap/OpenShell/discussions)
+- **Bug reports:** [GitHub Issues](https://github.com/LobsterTrap/OpenShell/issues) — use the bug report template
 - **Security vulnerabilities:** See [SECURITY.md](SECURITY.md) — do not use GitHub Issues
 - **Agent-assisted help:** Clone the repo and use the agent skills in `.agents/skills/` for self-service diagnostics
 
 ## Learn More
 
 - [Full Documentation](https://docs.nvidia.com/openshell/latest/index.html) — overview, architecture, tutorials, and reference
-- [Quickstart](https://github.com/NVIDIA/OpenShell/blob/main/docs/get-started/quickstart.md) — detailed install and first sandbox walkthrough
-- [GitHub Sandbox Tutorial](https://github.com/NVIDIA/OpenShell/blob/main/docs/tutorials/github-sandbox.md) — end-to-end scoped GitHub repo access
-- [Architecture](https://github.com/NVIDIA/OpenShell/tree/main/architecture) — detailed architecture docs and design decisions
-- [Support Matrix](https://github.com/NVIDIA/OpenShell/blob/main/docs/reference/support-matrix.md) — platforms, versions, and kernel requirements
+- [Quickstart](https://github.com/LobsterTrap/OpenShell/blob/main/docs/get-started/quickstart.md) — detailed install and first sandbox walkthrough
+- [GitHub Sandbox Tutorial](https://github.com/LobsterTrap/OpenShell/blob/main/docs/tutorials/github-sandbox.md) — end-to-end scoped GitHub repo access
+- [Architecture](https://github.com/LobsterTrap/OpenShell/tree/main/architecture) — detailed architecture docs and design decisions
+- [Support Matrix](https://github.com/LobsterTrap/OpenShell/blob/main/docs/reference/support-matrix.md) — platforms, versions, and kernel requirements
 - [Brev Launchable](https://brev.nvidia.com/launchable/deploy/now?launchableID=env-3Ap3tL55zq4a8kew1AuW0FpSLsg) — try OpenShell on cloud compute without local setup
 - [Agent Instructions](AGENTS.md) — system prompt and workflow documentation for agent contributors
 
@@ -235,4 +235,4 @@ This software automatically retrieves, accesses or interacts with external mater
 
 ## License
 
-This project is licensed under the [Apache License 2.0](https://github.com/NVIDIA/OpenShell/blob/main/LICENSE).
+This project is licensed under the [Apache License 2.0](https://github.com/LobsterTrap/OpenShell/blob/main/LICENSE).

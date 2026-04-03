@@ -20,9 +20,9 @@ concurrency:
 
 jobs:
     build:
-        runs-on: build-arm64
+        runs-on: ubuntu-24.04-arm
         container:
-            image: ghcr.io/nvidia/openshell/ci:latest
+            image: ghcr.io/lobstertrap/openshell/ci:latest
             credentials:
                 username: ${{ github.actor }}
                 password: ${{ secrets.GITHUB_TOKEN }}
@@ -52,9 +52,9 @@ jobs:
     publish:
         if: false # disabled until GitHub Pages is configured
         needs: [build]
-        runs-on: build-arm64
+        runs-on: ubuntu-24.04-arm
         container:
-            image: ghcr.io/nvidia/openshell/ci:latest
+            image: ghcr.io/lobstertrap/openshell/ci:latest
             credentials:
                 username: ${{ github.actor }}
                 password: ${{ secrets.GITHUB_TOKEN }}

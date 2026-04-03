@@ -15,7 +15,7 @@ jobs:
     with:
       component: gateway
       platform: linux/arm64
-      runner: build-arm64
+      runner: ubuntu-24.04-arm
 
   build-cluster:
     if: contains(github.event.pull_request.labels.*.name, 'test:e2e')
@@ -23,11 +23,11 @@ jobs:
     with:
       component: cluster
       platform: linux/arm64
-      runner: build-arm64
+      runner: ubuntu-24.04-arm
 
   e2e:
     needs: [build-gateway, build-cluster]
     uses: ./.github/workflows/e2e-test.yml
     with:
       image-tag: ${{ github.sha }}
-      runner: build-arm64
+      runner: ubuntu-24.04-arm

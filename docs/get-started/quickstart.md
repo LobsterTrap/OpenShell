@@ -53,7 +53,7 @@ $ uv tool install -U openshell
 After installing the CLI, run `openshell --help` in your terminal to see the full CLI reference, including all commands and flags.
 
 :::{tip}
-You can also clone the [NVIDIA OpenShell GitHub repository](https://github.com/NVIDIA/OpenShell) and use the `/openshell-cli` skill to load the CLI reference into your agent.
+You can also clone the [NVIDIA OpenShell GitHub repository](https://github.com/LobsterTrap/OpenShell) and use the `/openshell-cli` skill to load the CLI reference into your agent.
 :::
 
 ## Create Your First OpenShell Sandbox

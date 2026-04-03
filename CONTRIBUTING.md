@@ -22,7 +22,7 @@ OpenShell is agent-first, not agent-only. The distinction matters:
 
 We use a vouch system. This exists because AI makes it trivial to generate plausible-looking but low-quality contributions, and we can no longer trust by default.
 
-1. Open a [Vouch Request](https://github.com/NVIDIA/OpenShell/discussions/new?category=vouch-request) discussion.
+1. Open a [Vouch Request](https://github.com/LobsterTrap/OpenShell/discussions/new?category=vouch-request) discussion.
 2. Describe what you want to change and why.
 3. Write in your own words. AI-generated vouch requests will be denied.
 4. A maintainer will comment `/vouch` if approved.
@@ -32,7 +32,7 @@ We use a vouch system. This exists because AI makes it trivial to generate plaus
 
 ### Finding Work
 
-Issues labeled [`good-first-issue`](https://github.com/NVIDIA/OpenShell/issues?q=is%3Aissue+is%3Aopen+label%3Agood-first-issue) are scoped, well-documented, and friendly to new contributors. Start there. If you need guidance, comment on the issue.
+Issues labeled [`good-first-issue`](https://github.com/LobsterTrap/OpenShell/issues?q=is%3Aissue+is%3Aopen+label%3Agood-first-issue) are scoped, well-documented, and friendly to new contributors. Start there. If you need guidance, comment on the issue.
 
 All open issues are actionable — if it's in the issue tracker, it's ready to be worked on.
 

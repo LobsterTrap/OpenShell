@@ -20,7 +20,7 @@ source ~/.zshrc  # if you added them to your profile
 mise run docker:build:cluster
 
 # 5. Tag the image for local use
-podman tag localhost/openshell/cluster:dev ghcr.io/nvidia/openshell/cluster:dev
+podman tag localhost/openshell/cluster:dev ghcr.io/lobstertrap/openshell/cluster:dev
 
 # 6. Build and install CLI
 cargo build --release -p openshell-cli

@@ -182,7 +182,7 @@ jobs:
               '',
               'You can now submit pull requests to OpenShell. Welcome aboard.',
               '',
-              'Please read [CONTRIBUTING.md](https://github.com/NVIDIA/OpenShell/blob/main/CONTRIBUTING.md) before submitting.',
+              'Please read [CONTRIBUTING.md](https://github.com/LobsterTrap/OpenShell/blob/main/CONTRIBUTING.md) before submitting.',
             ].join('\n'));
 
             console.log(`Vouched ${discussionAuthor} (approved by ${commenter}).`);

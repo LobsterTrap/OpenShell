@@ -41,5 +41,5 @@ body:
       options:
         - label: I wrote this request myself (not AI-generated)
           required: true
-        - label: I have read [CONTRIBUTING.md](https://github.com/NVIDIA/OpenShell/blob/main/CONTRIBUTING.md)
+        - label: I have read [CONTRIBUTING.md](https://github.com/LobsterTrap/OpenShell/blob/main/CONTRIBUTING.md)
           required: true

@@ -33,10 +33,10 @@ pub const DEFAULT_IMAGE_TAG: &str = match option_env!("OPENSHELL_IMAGE_TAG") {
 pub const DEFAULT_REGISTRY: &str = "ghcr.io";
 
 /// Default image repository base on GHCR (without component name or tag).
-pub const DEFAULT_IMAGE_REPO_BASE: &str = "ghcr.io/nvidia/openshell";
+pub const DEFAULT_IMAGE_REPO_BASE: &str = "ghcr.io/lobstertrap/openshell";
 
 /// Default full gateway image path on GHCR (without tag).
-pub const DEFAULT_GATEWAY_IMAGE: &str = "ghcr.io/nvidia/openshell/cluster";
+pub const DEFAULT_GATEWAY_IMAGE: &str = "ghcr.io/lobstertrap/openshell/cluster";
 
 /// Default username for token-based GHCR authentication.
 ///
@@ -213,7 +213,7 @@ pub async fn pull_remote_image(
 
     // Tag the pulled image to the expected local image ref so downstream code
     // (container creation, image ID checks) works unchanged.
-    // e.g., tag "ghcr.io/nvidia/openshell/cluster:latest" as "openshell/cluster:dev"
+    // e.g., tag "ghcr.io/lobstertrap/openshell/cluster:latest" as "openshell/cluster:dev"
     let (target_repo, target_tag) = parse_image_ref(image_ref);
     info!(
         "Tagging {} as {}:{}",

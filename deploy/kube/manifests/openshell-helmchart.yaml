@@ -25,7 +25,7 @@ spec:
   valuesContent: |-
     chartChecksum: __CHART_CHECKSUM__
     image:
-      repository: ghcr.io/nvidia/openshell/gateway
+      repository: ghcr.io/lobstertrap/openshell/gateway
       tag: latest
       pullPolicy: Always
     server:

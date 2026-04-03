@@ -166,7 +166,7 @@ COPY --from=supervisor-builder /build/out/openshell-sandbox /openshell-sandbox
 # ---------------------------------------------------------------------------
 # Final gateway image
 # ---------------------------------------------------------------------------
-FROM nvcr.io/nvidia/base/ubuntu:noble-20251013 AS gateway
+FROM ubuntu:24.04 AS gateway
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates && \
@@ -229,7 +229,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # ---------------------------------------------------------------------------
 # Final cluster image
 # ---------------------------------------------------------------------------
-FROM nvcr.io/nvidia/base/ubuntu:noble-20251013 AS cluster
+FROM ubuntu:24.04 AS cluster
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \

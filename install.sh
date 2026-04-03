@@ -5,7 +5,7 @@
 # Install the OpenShell CLI binary.
 #
 # Usage:
-#   curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | sh
+#   curl -LsSf https://raw.githubusercontent.com/LobsterTrap/OpenShell/main/install.sh | sh
 #
 # Or run directly:
 #   ./install.sh
@@ -17,7 +17,7 @@
 set -eu
 
 APP_NAME="openshell"
-REPO="NVIDIA/OpenShell"
+REPO="LobsterTrap/OpenShell"
 GITHUB_URL="https://github.com/${REPO}"
 
 # ---------------------------------------------------------------------------
@@ -25,16 +25,16 @@ GITHUB_URL="https://github.com/${REPO}"
 # ---------------------------------------------------------------------------
 
 info() {
-  printf '%s: %s\n' "$APP_NAME" "$*" >&2
+	printf '%s: %s\n' "$APP_NAME" "$*" >&2
 }
 
 warn() {
-  printf '%s: warning: %s\n' "$APP_NAME" "$*" >&2
+	printf '%s: warning: %s\n' "$APP_NAME" "$*" >&2
 }
 
 error() {
-  printf '%s: error: %s\n' "$APP_NAME" "$*" >&2
-  exit 1
+	printf '%s: error: %s\n' "$APP_NAME" "$*" >&2
+	exit 1
 }
 
 # ---------------------------------------------------------------------------
@@ -42,11 +42,11 @@ error() {
 # ---------------------------------------------------------------------------
 
 usage() {
-  cat <<EOF
+	cat <<EOF
 install.sh — Install the OpenShell CLI
 
 USAGE:
-    curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | sh
+    curl -LsSf https://raw.githubusercontent.com/LobsterTrap/OpenShell/main/install.sh | sh
     ./install.sh [OPTIONS]
 
 OPTIONS:
@@ -58,13 +58,13 @@ ENVIRONMENT VARIABLES:
 
 EXAMPLES:
     # Install latest release
-    curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | sh
+    curl -LsSf https://raw.githubusercontent.com/LobsterTrap/OpenShell/main/install.sh | sh
 
     # Install a specific version
-    curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | OPENSHELL_VERSION=v0.0.9  sh
+    curl -LsSf https://raw.githubusercontent.com/LobsterTrap/OpenShell/main/install.sh | OPENSHELL_VERSION=v0.0.9  sh
 
     # Install to /usr/local/bin
-    curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | OPENSHELL_INSTALL_DIR=/usr/local/bin sh
+    curl -LsSf https://raw.githubusercontent.com/LobsterTrap/OpenShell/main/install.sh | OPENSHELL_INSTALL_DIR=/usr/local/bin sh
 EOF
 }
 
@@ -73,41 +73,41 @@ EOF
 # ---------------------------------------------------------------------------
 
 has_cmd() {
-  command -v "$1" >/dev/null 2>&1
+	command -v "$1" >/dev/null 2>&1
 }
 
 check_downloader() {
-  if has_cmd curl; then
-    return 0
-  elif has_cmd wget; then
-    return 0
-  else
-    error "either 'curl' or 'wget' is required to download files"
-  fi
+	if has_cmd curl; then
+		return 0
+	elif has_cmd wget; then
+		return 0
+	else
+		error "either 'curl' or 'wget' is required to download files"
+	fi
 }
 
 # Download a URL to a file. Outputs nothing on success.
 download() {
-  _url="$1"
-  _output="$2"
+	_url="$1"
+	_output="$2"
 
-  if has_cmd curl; then
-    curl -fLsS --retry 3 --max-redirs 5 -o "$_output" "$_url"
-  elif has_cmd wget; then
-    wget -q --tries=3 --max-redirect=5 -O "$_output" "$_url"
-  fi
+	if has_cmd curl; then
+		curl -fLsS --retry 3 --max-redirs 5 -o "$_output" "$_url"
+	elif has_cmd wget; then
+		wget -q --tries=3 --max-redirect=5 -O "$_output" "$_url"
+	fi
 }
 
 # Follow a URL and print the final resolved URL (for detecting redirect targets).
 resolve_redirect() {
-  _url="$1"
+	_url="$1"
 
-  if has_cmd curl; then
-    curl -fLsS -o /dev/null -w '%{url_effective}' "$_url"
-  elif has_cmd wget; then
-    # wget --spider follows redirects; capture the final Location from stderr
-    wget --spider --max-redirect=10 "$_url" 2>&1 | sed -n 's/^.*Location: \([^ ]*\).*/\1/p' | tail -1
-  fi
+	if has_cmd curl; then
+		curl -fLsS -o /dev/null -w '%{url_effective}' "$_url"
+	elif has_cmd wget; then
+		# wget --spider follows redirects; capture the final Location from stderr
+		wget --spider --max-redirect=10 "$_url" 2>&1 | sed -n 's/^.*Location: \([^ ]*\).*/\1/p' | tail -1
+	fi
 }
 
 # ---------------------------------------------------------------------------
@@ -115,34 +115,34 @@ resolve_redirect() {
 # ---------------------------------------------------------------------------
 
 get_os() {
-  case "$(uname -s)" in
-    Darwin) echo "apple-darwin" ;;
-    Linux)  echo "unknown-linux-musl" ;;
-    *)      error "unsupported OS: $(uname -s)" ;;
-  esac
+	case "$(uname -s)" in
+	Darwin) echo "apple-darwin" ;;
+	Linux) echo "unknown-linux-musl" ;;
+	*) error "unsupported OS: $(uname -s)" ;;
+	esac
 }
 
 get_arch() {
-  case "$(uname -m)" in
-    x86_64|amd64)  echo "x86_64" ;;
-    aarch64|arm64) echo "aarch64" ;;
-    *) error "unsupported architecture: $(uname -m)" ;;
-  esac
+	case "$(uname -m)" in
+	x86_64 | amd64) echo "x86_64" ;;
+	aarch64 | arm64) echo "aarch64" ;;
+	*) error "unsupported architecture: $(uname -m)" ;;
+	esac
 }
 
 get_target() {
-  _arch="$(get_arch)"
-  _os="$(get_os)"
-  _target="${_arch}-${_os}"
+	_arch="$(get_arch)"
+	_os="$(get_os)"
+	_target="${_arch}-${_os}"
 
-  # Only these targets have published binaries.
-  case "$_target" in
-    x86_64-unknown-linux-musl|aarch64-unknown-linux-musl|aarch64-apple-darwin) ;;
-    x86_64-apple-darwin) error "macOS x86_64 is not supported; use Apple Silicon (aarch64) or Rosetta 2" ;;
-    *) error "no prebuilt binary for $_target" ;;
-  esac
+	# Only these targets have published binaries.
+	case "$_target" in
+	x86_64-unknown-linux-musl | aarch64-unknown-linux-musl | aarch64-apple-darwin) ;;
+	x86_64-apple-darwin) error "macOS x86_64 is not supported; use Apple Silicon (aarch64) or Rosetta 2" ;;
+	*) error "no prebuilt binary for $_target" ;;
+	esac
 
-  echo "$_target"
+	echo "$_target"
 }
 
 # ---------------------------------------------------------------------------
@@ -150,37 +150,36 @@ get_target() {
 # ---------------------------------------------------------------------------
 
 resolve_version() {
-  if [ -n "${OPENSHELL_VERSION:-}" ]; then
-    echo "$OPENSHELL_VERSION"
-    return 0
-  fi
+	if [ -n "${OPENSHELL_VERSION:-}" ]; then
+		echo "$OPENSHELL_VERSION"
+		return 0
+	fi
 
-  # Resolve "latest" by following the GitHub releases/latest redirect.
-  # GitHub redirects /releases/latest -> /releases/tag/<tag>
-  info "resolving latest version..."
-  _latest_url="${GITHUB_URL}/releases/latest"
-  _resolved="$(resolve_redirect "$_latest_url")" || error "failed to resolve latest release from ${_latest_url}"
+	# Resolve "latest" by following the GitHub releases/latest redirect.
+	# GitHub redirects /releases/latest -> /releases/tag/<tag>
+	info "resolving latest version..."
+	_latest_url="${GITHUB_URL}/releases/latest"
+	_resolved="$(resolve_redirect "$_latest_url")" || error "failed to resolve latest release from ${_latest_url}"
 
-  # Validate that the redirect stayed on the expected GitHub origin.
-  # A MITM or DNS hijack could redirect to an attacker-controlled domain,
-  # which would also serve a matching checksums file (making checksum
-  # verification useless). See: https://github.com/NVIDIA/OpenShell/issues/638
-  case "$_resolved" in
-    https://github.com/${REPO}/releases/*)
-      ;;
-    *)
-      error "unexpected redirect target: ${_resolved} (expected https://github.com/${REPO}/releases/...)"
-      ;;
-  esac
+	# Validate that the redirect stayed on the expected GitHub origin.
+	# A MITM or DNS hijack could redirect to an attacker-controlled domain,
+	# which would also serve a matching checksums file (making checksum
+	# verification useless). See: https://github.com/NVIDIA/OpenShell/issues/638
+	case "$_resolved" in
+	https://github.com/${REPO}/releases/*) ;;
+	*)
+		error "unexpected redirect target: ${_resolved} (expected https://github.com/${REPO}/releases/...)"
+		;;
+	esac
 
-  # Extract the tag from the resolved URL: .../releases/tag/v0.0.4 -> v0.0.4
-  _version="${_resolved##*/}"
+	# Extract the tag from the resolved URL: .../releases/tag/v0.0.4 -> v0.0.4
+	_version="${_resolved##*/}"
 
-  if [ -z "$_version" ] || [ "$_version" = "latest" ]; then
-    error "could not determine latest release version (resolved URL: ${_resolved})"
-  fi
+	if [ -z "$_version" ] || [ "$_version" = "latest" ]; then
+		error "could not determine latest release version (resolved URL: ${_resolved})"
+	fi
 
-  echo "$_version"
+	echo "$_version"
 }
 
 # ---------------------------------------------------------------------------
@@ -188,25 +187,25 @@ resolve_version() {
 # ---------------------------------------------------------------------------
 
 verify_checksum() {
-  _vc_archive="$1"
-  _vc_checksums="$2"
-  _vc_filename="$3"
+	_vc_archive="$1"
+	_vc_checksums="$2"
+	_vc_filename="$3"
 
-  if ! has_cmd shasum && ! has_cmd sha256sum; then
-    error "neither 'shasum' nor 'sha256sum' found; cannot verify download integrity"
-  fi
+	if ! has_cmd shasum && ! has_cmd sha256sum; then
+		error "neither 'shasum' nor 'sha256sum' found; cannot verify download integrity"
+	fi
 
-  _vc_expected="$(grep -F "$_vc_filename" "$_vc_checksums" | awk '{print $1}')"
+	_vc_expected="$(grep -F "$_vc_filename" "$_vc_checksums" | awk '{print $1}')"
 
-  if [ -z "$_vc_expected" ]; then
-    error "no checksum entry found for $_vc_filename in checksums file"
-  fi
+	if [ -z "$_vc_expected" ]; then
+		error "no checksum entry found for $_vc_filename in checksums file"
+	fi
 
-  if has_cmd shasum; then
-    echo "$_vc_expected  $_vc_archive" | shasum -a 256 -c --quiet 2>/dev/null
-  elif has_cmd sha256sum; then
-    echo "$_vc_expected  $_vc_archive" | sha256sum -c --quiet 2>/dev/null
-  fi
+	if has_cmd shasum; then
+		echo "$_vc_expected  $_vc_archive" | shasum -a 256 -c --quiet 2>/dev/null
+	elif has_cmd sha256sum; then
+		echo "$_vc_expected  $_vc_archive" | sha256sum -c --quiet 2>/dev/null
+	fi
 }
 
 # ---------------------------------------------------------------------------
@@ -214,20 +213,20 @@ verify_checksum() {
 # ---------------------------------------------------------------------------
 
 get_install_dir() {
-  if [ -n "${OPENSHELL_INSTALL_DIR:-}" ]; then
-    echo "$OPENSHELL_INSTALL_DIR"
-  else
-    echo "${HOME}/.local/bin"
-  fi
+	if [ -n "${OPENSHELL_INSTALL_DIR:-}" ]; then
+		echo "$OPENSHELL_INSTALL_DIR"
+	else
+		echo "${HOME}/.local/bin"
+	fi
 }
 
 # Check if a directory is already on PATH.
 is_on_path() {
-  _dir="$1"
-  case ":${PATH}:" in
-    *":${_dir}:"*) return 0 ;;
-    *)             return 1 ;;
-  esac
+	_dir="$1"
+	case ":${PATH}:" in
+	*":${_dir}:"*) return 0 ;;
+	*) return 1 ;;
+	esac
 }
 
 # ---------------------------------------------------------------------------
@@ -235,86 +234,86 @@ is_on_path() {
 # ---------------------------------------------------------------------------
 
 main() {
-  # Parse CLI flags
-  for arg in "$@"; do
-    case "$arg" in
-      --help)
-        usage
-        exit 0
-        ;;
-      *)
-        error "unknown option: $arg"
-        ;;
-    esac
-  done
+	# Parse CLI flags
+	for arg in "$@"; do
+		case "$arg" in
+		--help)
+			usage
+			exit 0
+			;;
+		*)
+			error "unknown option: $arg"
+			;;
+		esac
+	done
 
-  check_downloader
+	check_downloader
 
-  _version="$(resolve_version)"
-  _target="$(get_target)"
-  _filename="${APP_NAME}-${_target}.tar.gz"
-  _download_url="${GITHUB_URL}/releases/download/${_version}/${_filename}"
-  _checksums_url="${GITHUB_URL}/releases/download/${_version}/${APP_NAME}-checksums-sha256.txt"
-  _install_dir="$(get_install_dir)"
+	_version="$(resolve_version)"
+	_target="$(get_target)"
+	_filename="${APP_NAME}-${_target}.tar.gz"
+	_download_url="${GITHUB_URL}/releases/download/${_version}/${_filename}"
+	_checksums_url="${GITHUB_URL}/releases/download/${_version}/${APP_NAME}-checksums-sha256.txt"
+	_install_dir="$(get_install_dir)"
 
-  info "downloading ${APP_NAME} ${_version} (${_target})..."
+	info "downloading ${APP_NAME} ${_version} (${_target})..."
 
-  _tmpdir="$(mktemp -d)"
-  trap 'rm -rf "$_tmpdir"' EXIT
+	_tmpdir="$(mktemp -d)"
+	trap 'rm -rf "$_tmpdir"' EXIT
 
-  if ! download "$_download_url" "${_tmpdir}/${_filename}"; then
-    error "failed to download ${_download_url}"
-  fi
+	if ! download "$_download_url" "${_tmpdir}/${_filename}"; then
+		error "failed to download ${_download_url}"
+	fi
 
-  # Verify checksum (mandatory — never skip)
-  info "verifying checksum..."
-  if ! download "$_checksums_url" "${_tmpdir}/checksums.txt"; then
-    error "failed to download checksums file from ${_checksums_url}"
-  fi
-  if ! verify_checksum "${_tmpdir}/${_filename}" "${_tmpdir}/checksums.txt" "$_filename"; then
-    error "checksum verification failed for ${_filename}"
-  fi
+	# Verify checksum (mandatory — never skip)
+	info "verifying checksum..."
+	if ! download "$_checksums_url" "${_tmpdir}/checksums.txt"; then
+		error "failed to download checksums file from ${_checksums_url}"
+	fi
+	if ! verify_checksum "${_tmpdir}/${_filename}" "${_tmpdir}/checksums.txt" "$_filename"; then
+		error "checksum verification failed for ${_filename}"
+	fi
 
-  # Extract
-  info "extracting..."
-  tar -xzf "${_tmpdir}/${_filename}" -C "${_tmpdir}"
+	# Extract
+	info "extracting..."
+	tar -xzf "${_tmpdir}/${_filename}" -C "${_tmpdir}"
 
-  # Install
-  mkdir -p "$_install_dir" 2>/dev/null || true
+	# Install
+	mkdir -p "$_install_dir" 2>/dev/null || true
 
-  if [ -w "$_install_dir" ] || mkdir -p "$_install_dir" 2>/dev/null; then
-    install -m 755 "${_tmpdir}/${APP_NAME}" "${_install_dir}/${APP_NAME}"
-  else
-    info "elevated permissions required to install to ${_install_dir}"
-    sudo mkdir -p "$_install_dir"
-    sudo install -m 755 "${_tmpdir}/${APP_NAME}" "${_install_dir}/${APP_NAME}"
-  fi
+	if [ -w "$_install_dir" ] || mkdir -p "$_install_dir" 2>/dev/null; then
+		install -m 755 "${_tmpdir}/${APP_NAME}" "${_install_dir}/${APP_NAME}"
+	else
+		info "elevated permissions required to install to ${_install_dir}"
+		sudo mkdir -p "$_install_dir"
+		sudo install -m 755 "${_tmpdir}/${APP_NAME}" "${_install_dir}/${APP_NAME}"
+	fi
 
-  _installed_version="$("${_install_dir}/${APP_NAME}" --version 2>/dev/null || echo "${_version}")"
-  info "installed ${_installed_version} to ${_install_dir}/${APP_NAME}"
+	_installed_version="$("${_install_dir}/${APP_NAME}" --version 2>/dev/null || echo "${_version}")"
+	info "installed ${_installed_version} to ${_install_dir}/${APP_NAME}"
 
-  # If the install directory isn't on PATH, print instructions
-  if ! is_on_path "$_install_dir"; then
-    echo ""
-    info "${_install_dir} is not on your PATH."
-    info ""
-    info "Add it by appending the following to your shell configuration file"
-    info "(e.g. ~/.bashrc, ~/.zshrc, or ~/.config/fish/config.fish):"
-    info ""
+	# If the install directory isn't on PATH, print instructions
+	if ! is_on_path "$_install_dir"; then
+		echo ""
+		info "${_install_dir} is not on your PATH."
+		info ""
+		info "Add it by appending the following to your shell configuration file"
+		info "(e.g. ~/.bashrc, ~/.zshrc, or ~/.config/fish/config.fish):"
+		info ""
 
-    _current_shell="$(basename "${SHELL:-sh}" 2>/dev/null || echo "sh")"
-    case "$_current_shell" in
-      fish)
-        info "    fish_add_path ${_install_dir}"
-        ;;
-      *)
-        info "    export PATH=\"${_install_dir}:\$PATH\""
-        ;;
-    esac
+		_current_shell="$(basename "${SHELL:-sh}" 2>/dev/null || echo "sh")"
+		case "$_current_shell" in
+		fish)
+			info "    fish_add_path ${_install_dir}"
+			;;
+		*)
+			info "    export PATH=\"${_install_dir}:\$PATH\""
+			;;
+		esac
 
-    info ""
-    info "Then restart your shell or run the command above in your current session."
-  fi
+		info ""
+		info "Then restart your shell or run the command above in your current session."
+	fi
 }
 
 main "$@"

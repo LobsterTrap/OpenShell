@@ -37,7 +37,7 @@ classifiers = [
 keywords = ["agent", "sandbox", "nvidia"]
 
 [project.urls]
-source = "https://github.com/NVIDIA/OpenShell"
+source = "https://github.com/LobsterTrap/OpenShell"
 documentation = "https://docs.nvidia.com/openshell/latest/"
 
 [dependency-groups]
