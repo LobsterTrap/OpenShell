@@ -25,6 +25,7 @@ ARG NVIDIA_CONTAINER_TOOLKIT_VERSION=1.18.2-1
 # Shared Rust build stages
 # ---------------------------------------------------------------------------
 FROM --platform=$BUILDPLATFORM quay.io/hummingbird/rust:latest-builder AS rust-builder-base
+USER root
 ARG TARGETARCH
 ARG BUILDARCH
 ARG CARGO_TARGET_CACHE_SCOPE=default
@@ -201,6 +202,7 @@ RUN curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-${TARGETARCH}.tar
     chmod +x /tmp/helm
 
 FROM quay.io/hummingbird/core-runtime:latest-builder AS nvidia-container-toolkit
+USER root
 ARG NVIDIA_CONTAINER_TOOLKIT_VERSION
 
 RUN curl -s -L https://nvidia.github.io/libnvidia-container/stable/rpm/nvidia-container-toolkit.repo \
@@ -213,6 +215,7 @@ RUN curl -s -L https://nvidia.github.io/libnvidia-container/stable/rpm/nvidia-co
 # Final cluster image
 # ---------------------------------------------------------------------------
 FROM quay.io/hummingbird/core-runtime:latest-builder AS cluster
+USER root
 
 RUN dnf install -y \
     ca-certificates \
