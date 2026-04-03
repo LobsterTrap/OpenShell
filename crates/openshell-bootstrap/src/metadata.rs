@@ -570,6 +570,7 @@ mod tests {
             auth_mode: None,
             edge_team_domain: None,
             edge_auth_url: None,
+            container_runtime: ContainerRuntime::default(),
         };
         assert_eq!(meta.gateway_host(), None);
     }
@@ -586,6 +587,7 @@ mod tests {
             auth_mode: None,
             edge_team_domain: None,
             edge_auth_url: None,
+            container_runtime: ContainerRuntime::default(),
         };
         assert_eq!(meta.gateway_host(), Some("10.0.0.5"));
     }
