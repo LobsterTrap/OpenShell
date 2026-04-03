@@ -6,6 +6,7 @@
 # (--forward 8080 on the CLI) to reach it from your local machine.
 
 FROM quay.io/hummingbird/python:3.13-builder
+USER root
 
 # System tools useful for sandbox networking and debugging.
 # iproute2: required for network namespace management (ip netns, veth pairs)

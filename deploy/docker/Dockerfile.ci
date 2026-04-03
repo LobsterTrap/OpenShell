@@ -7,6 +7,7 @@
 # Rebuild triggered automatically when mise.toml or this file changes
 
 FROM quay.io/hummingbird/core-runtime:latest-builder
+USER root
 
 ARG DOCKER_VERSION=29.3.1
 ARG BUILDX_VERSION=v0.32.1
