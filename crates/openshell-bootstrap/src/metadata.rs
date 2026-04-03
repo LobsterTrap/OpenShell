@@ -289,11 +289,7 @@ pub fn load_active_gateway() -> Option<String> {
     let path = active_gateway_path().ok()?;
     let contents = std::fs::read_to_string(&path).ok()?;
     let name = contents.trim().to_string();
-    if name.is_empty() {
-        None
-    } else {
-        Some(name)
-    }
+    if name.is_empty() { None } else { Some(name) }
 }
 
 /// Save the last-used sandbox name for a gateway to persistent storage.
@@ -313,11 +309,7 @@ pub fn load_last_sandbox(gateway: &str) -> Option<String> {
     let path = last_sandbox_path(gateway).ok()?;
     let contents = std::fs::read_to_string(&path).ok()?;
     let name = contents.trim().to_string();
-    if name.is_empty() {
-        None
-    } else {
-        Some(name)
-    }
+    if name.is_empty() { None } else { Some(name) }
 }
 
 /// Clear the last-used sandbox record for a gateway if it matches the given name.
