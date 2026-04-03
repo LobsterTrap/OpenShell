@@ -50,6 +50,16 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Install Helm
+        if: matrix.component == 'cluster'
+        uses: azure/setup-helm@v4
+
+      - name: Package Helm chart for cluster image
+        if: matrix.component == 'cluster'
+        run: |
+          mkdir -p deploy/docker/.build/charts
+          helm package deploy/helm/openshell -d deploy/docker/.build/charts/
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
