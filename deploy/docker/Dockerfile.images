@@ -214,6 +214,7 @@ ARG NVIDIA_CONTAINER_TOOLKIT_VERSION
 
 RUN dnf install -y fedora-repos ca-certificates && \
     update-ca-trust && \
+    ln -sf /etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem /etc/pki/tls/certs/ca-bundle.crt && \
     curl -s -L https://nvidia.github.io/libnvidia-container/stable/rpm/nvidia-container-toolkit.repo \
         | tee /etc/yum.repos.d/nvidia-container-toolkit.repo && \
     dnf install -y \
