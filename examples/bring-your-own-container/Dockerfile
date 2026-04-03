@@ -5,14 +5,12 @@
 # The image exposes port 8080 with a /hello endpoint.  Use port forwarding
 # (--forward 8080 on the CLI) to reach it from your local machine.
 
-FROM python:3.13-slim
+FROM quay.io/hummingbird/python:3.13-builder
 
 # System tools useful for sandbox networking and debugging.
 # iproute2: required for network namespace management (ip netns, veth pairs)
 # iptables: optional, enables bypass detection (LOG + REJECT for direct connections)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        curl iproute2 iptables \
-    && rm -rf /var/lib/apt/lists/*
+RUN dnf install -y curl iproute iptables && dnf clean all
 
 # Create the sandbox user (uid/gid 1000) for non-root execution.
 RUN groupadd -g 1000 sandbox && \

@@ -6,36 +6,34 @@
 # CI runner image with all development tools pre-installed
 # Rebuild triggered automatically when mise.toml or this file changes
 
-FROM ubuntu:24.04
+FROM quay.io/hummingbird/core-runtime:latest-builder
 
 ARG DOCKER_VERSION=29.3.1
 ARG BUILDX_VERSION=v0.32.1
 ARG TARGETARCH
 
-ENV DEBIAN_FRONTEND=noninteractive
 ENV MISE_DATA_DIR=/opt/mise
 ENV MISE_CACHE_DIR=/opt/mise/cache
 ENV PATH="/opt/mise/shims:/root/.cargo/bin:/root/.local/bin:$PATH"
 
 # Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN dnf install -y \
     ca-certificates \
     curl \
     git \
-    build-essential \
-    pkg-config \
-    libssl-dev \
-    openssh-client \
+    gcc gcc-c++ make \
+    pkgconf \
+    openssl-devel \
+    openssh-clients \
     python3 \
-    python3-venv \
     cmake \
     socat \
     unzip \
-    xz-utils \
+    xz \
     jq \
     rsync \
-    && apt-get install -y --only-upgrade gpgv python3 \
-    && rm -rf /var/lib/apt/lists/*
+    tar \
+    && dnf clean all
 
 # Install Docker CLI and buildx plugin used by CI jobs
 RUN case "$TARGETARCH" in \

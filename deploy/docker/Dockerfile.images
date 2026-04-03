@@ -24,7 +24,7 @@ ARG NVIDIA_CONTAINER_TOOLKIT_VERSION=1.18.2-1
 # ---------------------------------------------------------------------------
 # Shared Rust build stages
 # ---------------------------------------------------------------------------
-FROM --platform=$BUILDPLATFORM rust:1.88-slim AS rust-builder-base
+FROM --platform=$BUILDPLATFORM quay.io/hummingbird/rust:latest-builder AS rust-builder-base
 ARG TARGETARCH
 ARG BUILDARCH
 ARG CARGO_TARGET_CACHE_SCOPE=default
@@ -37,8 +37,7 @@ ARG CARGO_CODEGEN_UNITS
 ENV TARGETARCH=$TARGETARCH \
     BUILDARCH=$BUILDARCH
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    cmake g++ make protobuf-compiler curl && rm -rf /var/lib/apt/lists/*
+RUN dnf install -y cmake gcc-c++ make protobuf-compiler curl && dnf clean all
 
 COPY deploy/docker/cross-build.sh /usr/local/bin/
 RUN . cross-build.sh && install_cross_toolchain && install_sccache && add_rust_target
@@ -166,14 +165,7 @@ COPY --from=supervisor-builder /build/out/openshell-sandbox /openshell-sandbox
 # ---------------------------------------------------------------------------
 # Final gateway image
 # ---------------------------------------------------------------------------
-FROM ubuntu:24.04 AS gateway
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates && \
-    apt-get install -y --only-upgrade gpgv && \
-    rm -rf /var/lib/apt/lists/*
-
-RUN useradd --create-home --user-group openshell
+FROM quay.io/hummingbird/core-runtime:latest-openssl AS gateway
 
 WORKDIR /app
 
@@ -182,7 +174,8 @@ COPY --from=gateway-builder /build/out/openshell-server /usr/local/bin/
 RUN mkdir -p /build/crates/openshell-server
 COPY --chmod=755 crates/openshell-server/migrations /build/crates/openshell-server/migrations
 
-USER openshell
+# Hummingbird defaults to non-root UID 65532
+USER 65532
 EXPOSE 8080
 
 ENTRYPOINT ["openshell-server"]
@@ -193,51 +186,40 @@ CMD ["--port", "8080"]
 # ---------------------------------------------------------------------------
 FROM rancher/k3s:${K3S_VERSION}@${K3S_DIGEST} AS k3s
 
-FROM ubuntu:24.04 AS k9s
+FROM quay.io/hummingbird/curl:latest-builder AS k9s
 ARG K9S_VERSION
 ARG TARGETARCH
-RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && \
-    curl -fsSL "https://github.com/derailed/k9s/releases/download/${K9S_VERSION}/k9s_Linux_${TARGETARCH}.tar.gz" \
+RUN curl -fsSL "https://github.com/derailed/k9s/releases/download/${K9S_VERSION}/k9s_Linux_${TARGETARCH}.tar.gz" \
       | tar xz -C /tmp k9s && \
-    chmod +x /tmp/k9s && \
-    rm -rf /var/lib/apt/lists/*
+    chmod +x /tmp/k9s
 
-FROM ubuntu:24.04 AS helm
+FROM quay.io/hummingbird/curl:latest-builder AS helm
 ARG HELM_VERSION
 ARG TARGETARCH
-RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates && \
-    curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-${TARGETARCH}.tar.gz" \
+RUN curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-${TARGETARCH}.tar.gz" \
       | tar xz --strip-components=1 -C /tmp "linux-${TARGETARCH}/helm" && \
-    chmod +x /tmp/helm && \
-    rm -rf /var/lib/apt/lists/*
+    chmod +x /tmp/helm
 
-FROM ubuntu:24.04 AS nvidia-container-toolkit
+FROM quay.io/hummingbird/core-runtime:latest-builder AS nvidia-container-toolkit
 ARG NVIDIA_CONTAINER_TOOLKIT_VERSION
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        gpg curl ca-certificates && \
-    curl -fsSL https://nvidia.github.io/libnvidia-container/gpgkey \
-        | gpg --dearmor -o /usr/share/keyrings/nvidia-container-toolkit-keyring.gpg && \
-    curl -s -L https://nvidia.github.io/libnvidia-container/stable/deb/nvidia-container-toolkit.list \
-        | sed 's#deb https://#deb [signed-by=/usr/share/keyrings/nvidia-container-toolkit-keyring.gpg] https://#g' \
-        | tee /etc/apt/sources.list.d/nvidia-container-toolkit.list && \
-    apt-get update && \
-    apt-get install -y --no-install-recommends \
-        "nvidia-container-toolkit-base=${NVIDIA_CONTAINER_TOOLKIT_VERSION}" && \
-    rm -rf /var/lib/apt/lists/*
+RUN curl -s -L https://nvidia.github.io/libnvidia-container/stable/rpm/nvidia-container-toolkit.repo \
+        | tee /etc/yum.repos.d/nvidia-container-toolkit.repo && \
+    dnf install -y \
+        "nvidia-container-toolkit-base-${NVIDIA_CONTAINER_TOOLKIT_VERSION}" && \
+    dnf clean all
 
 # ---------------------------------------------------------------------------
 # Final cluster image
 # ---------------------------------------------------------------------------
-FROM ubuntu:24.04 AS cluster
+FROM quay.io/hummingbird/core-runtime:latest-builder AS cluster
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN dnf install -y \
     ca-certificates \
     iptables \
-    mount \
-    dnsutils \
-    && apt-get install -y --only-upgrade gpgv \
-    && rm -rf /var/lib/apt/lists/*
+    util-linux \
+    bind-utils \
+    && dnf clean all
 
 COPY --from=k3s /bin/ /bin/
 COPY --from=k9s /tmp/k9s /usr/local/bin/k9s
