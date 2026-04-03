@@ -38,7 +38,8 @@ ARG CARGO_CODEGEN_UNITS
 ENV TARGETARCH=$TARGETARCH \
     BUILDARCH=$BUILDARCH
 
-RUN dnf install -y cmake gcc-c++ make protobuf-compiler curl && dnf clean all
+RUN dnf install -y fedora-repos && \
+    dnf install -y cmake gcc-c++ make protobuf-compiler curl && dnf clean all
 
 COPY deploy/docker/cross-build.sh /usr/local/bin/
 RUN . cross-build.sh && install_cross_toolchain && install_sccache && add_rust_target
@@ -187,25 +188,32 @@ CMD ["--port", "8080"]
 # ---------------------------------------------------------------------------
 FROM rancher/k3s:${K3S_VERSION}@${K3S_DIGEST} AS k3s
 
-FROM quay.io/hummingbird/curl:latest-builder AS k9s
+FROM quay.io/hummingbird/core-runtime:latest-builder AS k9s
+USER root
 ARG K9S_VERSION
 ARG TARGETARCH
-RUN curl -fsSL "https://github.com/derailed/k9s/releases/download/${K9S_VERSION}/k9s_Linux_${TARGETARCH}.tar.gz" \
+RUN dnf install -y curl tar gzip && \
+    curl -fsSL "https://github.com/derailed/k9s/releases/download/${K9S_VERSION}/k9s_Linux_${TARGETARCH}.tar.gz" \
       | tar xz -C /tmp k9s && \
-    chmod +x /tmp/k9s
+    chmod +x /tmp/k9s && \
+    dnf clean all
 
-FROM quay.io/hummingbird/curl:latest-builder AS helm
+FROM quay.io/hummingbird/core-runtime:latest-builder AS helm
+USER root
 ARG HELM_VERSION
 ARG TARGETARCH
-RUN curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-${TARGETARCH}.tar.gz" \
+RUN dnf install -y curl tar gzip && \
+    curl -fsSL "https://get.helm.sh/helm-${HELM_VERSION}-linux-${TARGETARCH}.tar.gz" \
       | tar xz --strip-components=1 -C /tmp "linux-${TARGETARCH}/helm" && \
-    chmod +x /tmp/helm
+    chmod +x /tmp/helm && \
+    dnf clean all
 
 FROM quay.io/hummingbird/core-runtime:latest-builder AS nvidia-container-toolkit
 USER root
 ARG NVIDIA_CONTAINER_TOOLKIT_VERSION
 
-RUN curl -s -L https://nvidia.github.io/libnvidia-container/stable/rpm/nvidia-container-toolkit.repo \
+RUN dnf install -y ca-certificates && \
+    curl -s -L https://nvidia.github.io/libnvidia-container/stable/rpm/nvidia-container-toolkit.repo \
         | tee /etc/yum.repos.d/nvidia-container-toolkit.repo && \
     dnf install -y \
         "nvidia-container-toolkit-base-${NVIDIA_CONTAINER_TOOLKIT_VERSION}" && \
@@ -217,7 +225,8 @@ RUN curl -s -L https://nvidia.github.io/libnvidia-container/stable/rpm/nvidia-co
 FROM quay.io/hummingbird/core-runtime:latest-builder AS cluster
 USER root
 
-RUN dnf install -y \
+RUN dnf install -y fedora-repos && \
+    dnf install -y \
     ca-certificates \
     iptables \
     util-linux \
