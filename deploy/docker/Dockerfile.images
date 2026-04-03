@@ -169,6 +169,7 @@ COPY --from=supervisor-builder /build/out/openshell-sandbox /openshell-sandbox
 # Final gateway image
 # ---------------------------------------------------------------------------
 FROM quay.io/hummingbird/core-runtime:latest-openssl AS gateway
+USER root
 
 WORKDIR /app
 
@@ -177,7 +178,7 @@ COPY --from=gateway-builder /build/out/openshell-server /usr/local/bin/
 RUN mkdir -p /build/crates/openshell-server
 COPY --chmod=755 crates/openshell-server/migrations /build/crates/openshell-server/migrations
 
-# Hummingbird defaults to non-root UID 65532
+# Drop back to non-root for runtime
 USER 65532
 EXPOSE 8080
 
