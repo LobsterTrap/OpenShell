@@ -31,6 +31,7 @@ BuildRequires:  gcc-c++
 BuildRequires:  make
 BuildRequires:  cmake
 BuildRequires:  pkg-config
+BuildRequires:  systemd-rpm-macros
 
 # Python sub-package build dependencies
 BuildRequires:  python3-devel
