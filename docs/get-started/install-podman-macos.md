@@ -35,9 +35,7 @@ brew install podman mise
 bash scripts/setup-podman-macos.sh
 source scripts/podman.env
 mise run cluster:build:full
-cargo build --release -p openshell-cli
-mkdir -p ~/.local/bin
-cp target/release/openshell ~/.local/bin/
+cargo install --path crates/openshell-cli --root ~/.local
 openshell sandbox create
 ```
 
@@ -72,7 +70,9 @@ source scripts/podman.env
 This sets:
 - `CONTAINER_HOST` - Podman socket path
 - `OPENSHELL_CONTAINER_RUNTIME=podman` - Use Podman runtime
-- `OPENSHELL_REGISTRY=127.0.0.1:5000/openshell` - Local registry for component images
+- `OPENSHELL_IMAGE_REPO_BASE=127.0.0.1:5000/openshell` - Local registry for component images
+- `OPENSHELL_REGISTRY_HOST=127.0.0.1:5000` - Registry host
+- `OPENSHELL_REGISTRY_INSECURE=true` - Allow HTTP registry
 - `OPENSHELL_CLUSTER_IMAGE=localhost/openshell/cluster:dev` - Local cluster image
 
 To make these persistent, add to your shell profile (`~/.zshrc` or `~/.bashrc`):
@@ -114,9 +114,7 @@ tasks/scripts/cluster-bootstrap.sh build
 For a release-optimized binary that works system-wide:
 
 ```console
-cargo build --release -p openshell-cli
-mkdir -p ~/.local/bin
-cp target/release/openshell ~/.local/bin/
+cargo install --path crates/openshell-cli --root ~/.local
 ```
 
 ## Create a Sandbox
