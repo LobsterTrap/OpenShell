@@ -82,11 +82,12 @@ struct NetworkEndpointDef {
     #[serde(default, skip_serializing_if = "String::is_empty")]
     host: String,
     /// Single port (backwards compat). Mutually exclusive with `ports`.
+    /// Uses `u16` to reject invalid values >65535 at parse time.
     #[serde(default, skip_serializing_if = "is_zero")]
-    port: u32,
+    port: u16,
     /// Multiple ports. When non-empty, this endpoint covers all listed ports.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    ports: Vec<u32>,
+    ports: Vec<u16>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     protocol: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -101,7 +102,7 @@ struct NetworkEndpointDef {
     allowed_ips: Vec<String>,
 }
 
-fn is_zero(v: &u32) -> bool {
+fn is_zero(v: &u16) -> bool {
     *v == 0
 }
 
@@ -169,10 +170,10 @@ fn to_proto(raw: PolicyFile) -> SandboxPolicy {
                     .map(|e| {
                         // Normalize port/ports: ports takes precedence, else
                         // single port is promoted to ports array.
-                        let normalized_ports = if !e.ports.is_empty() {
-                            e.ports
+                        let normalized_ports: Vec<u32> = if !e.ports.is_empty() {
+                            e.ports.into_iter().map(u32::from).collect()
                         } else if e.port > 0 {
-                            vec![e.port]
+                            vec![u32::from(e.port)]
                         } else {
                             vec![]
                         };
@@ -285,10 +286,12 @@ fn from_proto(policy: &SandboxPolicy) -> PolicyFile {
                     .map(|e| {
                         // Use compact form: if ports has exactly 1 element,
                         // emit port (scalar). If >1, emit ports (array).
+                        // Proto uses u32; YAML uses u16. Clamp at boundary.
+                        let clamp = |v: u32| -> u16 { v.min(65535) as u16 };
                         let (port, ports) = if e.ports.len() > 1 {
-                            (0, e.ports.clone())
+                            (0, e.ports.iter().map(|&p| clamp(p)).collect())
                         } else {
-                            (e.ports.first().copied().unwrap_or(e.port), vec![])
+                            (clamp(e.ports.first().copied().unwrap_or(e.port)), vec![])
                         };
                         NetworkEndpointDef {
                             host: e.host.clone(),
@@ -358,7 +361,7 @@ fn from_proto(policy: &SandboxPolicy) -> PolicyFile {
 
 /// Parse a sandbox policy from a YAML string.
 pub fn parse_sandbox_policy(yaml: &str) -> Result<SandboxPolicy> {
-    let raw: PolicyFile = serde_yaml::from_str(yaml)
+    let raw: PolicyFile = serde_yml::from_str(yaml)
         .into_diagnostic()
         .wrap_err("failed to parse sandbox policy YAML")?;
     Ok(to_proto(raw))
@@ -371,7 +374,7 @@ pub fn parse_sandbox_policy(yaml: &str) -> Result<SandboxPolicy> {
 /// and is round-trippable through `parse_sandbox_policy`.
 pub fn serialize_sandbox_policy(policy: &SandboxPolicy) -> Result<String> {
     let yaml_repr = from_proto(policy);
-    serde_yaml::to_string(&yaml_repr)
+    serde_yml::to_string(&yaml_repr)
         .into_diagnostic()
         .wrap_err("failed to serialize policy to YAML")
 }
@@ -1205,6 +1208,22 @@ network_policies:
         assert_eq!(
             proto1.network_policies["test"].endpoints[0].host,
             proto2.network_policies["test"].endpoints[0].host
+        );
+    }
+
+    #[test]
+    fn rejects_port_above_65535() {
+        let yaml = r#"
+version: 1
+network_policies:
+  test:
+    endpoints:
+      - host: example.com
+        port: 70000
+"#;
+        assert!(
+            parse_sandbox_policy(yaml).is_err(),
+            "port >65535 should fail to parse"
         );
     }
 }

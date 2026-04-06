@@ -511,7 +511,7 @@ fn parse_process_policy(val: &regorus::Value) -> ProcessPolicy {
 
 /// Preprocess YAML policy data: parse, normalize, validate, expand access presets, return JSON.
 fn preprocess_yaml_data(yaml_str: &str) -> Result<String> {
-    let mut data: serde_json::Value = serde_yaml::from_str(yaml_str)
+    let mut data: serde_json::Value = serde_yml::from_str(yaml_str)
         .map_err(|e| miette::miette!("failed to parse YAML data: {e}"))?;
 
     // Normalize port → ports for all endpoints so Rego always sees "ports" array.

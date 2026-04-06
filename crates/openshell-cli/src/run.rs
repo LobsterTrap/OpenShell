@@ -24,13 +24,13 @@ use openshell_bootstrap::{
 use openshell_core::proto::{
     ApproveAllDraftChunksRequest, ApproveDraftChunkRequest, ClearDraftChunksRequest,
     CreateProviderRequest, CreateSandboxRequest, DeleteProviderRequest, DeleteSandboxRequest,
-    GetClusterInferenceRequest, GetDraftHistoryRequest, GetDraftPolicyRequest,
+    ExecSandboxRequest, GetClusterInferenceRequest, GetDraftHistoryRequest, GetDraftPolicyRequest,
     GetGatewayConfigRequest, GetProviderRequest, GetSandboxConfigRequest, GetSandboxLogsRequest,
     GetSandboxPolicyStatusRequest, GetSandboxRequest, HealthRequest, ListProvidersRequest,
     ListSandboxPoliciesRequest, ListSandboxesRequest, PolicyStatus, Provider,
     RejectDraftChunkRequest, Sandbox, SandboxPhase, SandboxPolicy, SandboxSpec, SandboxTemplate,
     SetClusterInferenceRequest, SettingScope, SettingValue, UpdateConfigRequest,
-    UpdateProviderRequest, WatchSandboxRequest, setting_value,
+    UpdateProviderRequest, WatchSandboxRequest, exec_sandbox_event, setting_value,
 };
 use openshell_core::settings::{self, SettingValueKind};
 use openshell_providers::{
@@ -38,7 +38,7 @@ use openshell_providers::{
 };
 use owo_colors::OwoColorize;
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::io::{IsTerminal, Write};
+use std::io::{IsTerminal, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -2722,6 +2722,116 @@ pub async fn sandbox_get(server: &str, name: &str, tls: &TlsOptions) -> Result<(
     }
 
     Ok(())
+}
+
+/// Maximum stdin payload size (4 MiB). Prevents the CLI from reading unbounded
+/// data into memory before the server rejects an oversized message.
+const MAX_STDIN_PAYLOAD: usize = 4 * 1024 * 1024;
+
+/// Execute a command in a running sandbox via gRPC, streaming output to the terminal.
+///
+/// Returns the remote command's exit code.
+pub async fn sandbox_exec_grpc(
+    server: &str,
+    name: &str,
+    command: &[String],
+    workdir: Option<&str>,
+    timeout_seconds: u32,
+    tty_override: Option<bool>,
+    tls: &TlsOptions,
+) -> Result<i32> {
+    let mut client = grpc_client(server, tls).await?;
+
+    // Resolve sandbox name to id.
+    let sandbox = client
+        .get_sandbox(GetSandboxRequest {
+            name: name.to_string(),
+        })
+        .await
+        .into_diagnostic()?
+        .into_inner()
+        .sandbox
+        .ok_or_else(|| miette::miette!("sandbox not found"))?;
+
+    // Verify the sandbox is ready before issuing the exec.
+    if SandboxPhase::try_from(sandbox.phase) != Ok(SandboxPhase::Ready) {
+        return Err(miette::miette!(
+            "sandbox '{}' is not ready (phase: {}); wait for it to reach Ready state",
+            name,
+            phase_name(sandbox.phase)
+        ));
+    }
+
+    // Read stdin if piped (not a TTY), using spawn_blocking to avoid blocking
+    // the async runtime. Cap the read at MAX_STDIN_PAYLOAD + 1 so we never
+    // buffer more than the limit into memory.
+    let stdin_payload = if !std::io::stdin().is_terminal() {
+        tokio::task::spawn_blocking(|| {
+            let limit = (MAX_STDIN_PAYLOAD + 1) as u64;
+            let mut buf = Vec::new();
+            std::io::stdin()
+                .take(limit)
+                .read_to_end(&mut buf)
+                .into_diagnostic()?;
+            if buf.len() > MAX_STDIN_PAYLOAD {
+                return Err(miette::miette!(
+                    "stdin payload exceeds {} byte limit; pipe smaller inputs or use `sandbox upload`",
+                    MAX_STDIN_PAYLOAD
+                ));
+            }
+            Ok(buf)
+        })
+        .await
+        .into_diagnostic()?? // first ? unwraps JoinError, second ? unwraps Result
+    } else {
+        Vec::new()
+    };
+
+    // Resolve TTY mode: explicit --tty / --no-tty wins, otherwise auto-detect.
+    let tty = tty_override
+        .unwrap_or_else(|| std::io::stdin().is_terminal() && std::io::stdout().is_terminal());
+
+    // Make the streaming gRPC call.
+    let mut stream = client
+        .exec_sandbox(ExecSandboxRequest {
+            sandbox_id: sandbox.id,
+            command: command.to_vec(),
+            workdir: workdir.unwrap_or_default().to_string(),
+            environment: HashMap::new(),
+            timeout_seconds,
+            stdin: stdin_payload,
+            tty,
+        })
+        .await
+        .into_diagnostic()?
+        .into_inner();
+
+    // Stream output to terminal in real-time.
+    let mut exit_code = 0i32;
+    let stdout = std::io::stdout();
+    let stderr = std::io::stderr();
+
+    while let Some(event) = stream.next().await {
+        let event = event.into_diagnostic()?;
+        match event.payload {
+            Some(exec_sandbox_event::Payload::Stdout(out)) => {
+                let mut handle = stdout.lock();
+                handle.write_all(&out.data).into_diagnostic()?;
+                handle.flush().into_diagnostic()?;
+            }
+            Some(exec_sandbox_event::Payload::Stderr(err)) => {
+                let mut handle = stderr.lock();
+                handle.write_all(&err.data).into_diagnostic()?;
+                handle.flush().into_diagnostic()?;
+            }
+            Some(exec_sandbox_event::Payload::Exit(exit)) => {
+                exit_code = exit.exit_code;
+            }
+            None => {}
+        }
+    }
+
+    Ok(exit_code)
 }
 
 /// Print a single YAML line with dimmed keys and regular values.

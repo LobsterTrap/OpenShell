@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::RemoteOptions;
-use crate::constants::{container_name, network_name, volume_name};
+use crate::constants::{container_name, network_name, node_name, volume_name};
 use crate::container_runtime::{
     ALL_HOST_GATEWAY_ALIASES, ContainerRuntime, DOCKER_HOST_GATEWAY_ALIAS,
     PODMAN_HOST_GATEWAY_ALIAS, find_all_sockets,
@@ -555,6 +555,7 @@ pub async fn ensure_container(
     registry_token: Option<&str>,
     device_ids: &[String],
     runtime: ContainerRuntime,
+    resume: bool,
 ) -> Result<u16> {
     let container_name = container_name(name);
 
@@ -564,25 +565,34 @@ pub async fn ensure_container(
         .await
     {
         Ok(info) => {
-            // Container exists — verify it is using the expected image.
-            // Resolve the desired image ref to its content-addressable ID so we
-            // can compare against the container's image field (which Docker
-            // stores as an ID).
-            let desired_id = docker
-                .inspect_image(image_ref)
-                .await
-                .ok()
-                .and_then(|img| img.id);
+            // On resume we always reuse the existing container — the persistent
+            // volume holds k3s etcd state, and recreating the container with
+            // different env vars would cause the entrypoint to rewrite the
+            // HelmChart manifest, triggering a Helm upgrade that changes the
+            // StatefulSet image reference while the old pod still runs with the
+            // previous image.  Reusing the container avoids this entirely.
+            //
+            // On a non-resume path we check whether the image changed and
+            // recreate only when necessary.
+            let reuse = if resume {
+                true
+            } else {
+                let desired_id = docker
+                    .inspect_image(image_ref)
+                    .await
+                    .ok()
+                    .and_then(|img| img.id);
 
-            let container_image_id = info.image;
+                let container_image_id = info.image.clone();
 
-            let image_matches = match (&desired_id, &container_image_id) {
-                (Some(desired), Some(current)) => desired == current,
-                _ => false,
+                match (&desired_id, &container_image_id) {
+                    (Some(desired), Some(current)) => desired == current,
+                    _ => false,
+                }
             };
 
-            if image_matches {
-                // The container exists with the correct image, but its network
+            if reuse {
+                // The container exists and should be reused. Its network
                 // attachment may be stale. When the gateway is resumed after a
                 // container kill, `ensure_network` destroys and recreates the
                 // Docker network (giving it a new ID). The stopped container
@@ -616,8 +626,8 @@ pub async fn ensure_container(
             tracing::info!(
                 "Container {} exists but uses a different image (container={}, desired={}), recreating",
                 container_name,
-                container_image_id.as_deref().map_or("unknown", truncate_id),
-                desired_id.as_deref().map_or("unknown", truncate_id),
+                info.image.as_deref().map_or("unknown", truncate_id),
+                image_ref,
             );
 
             let _ = docker.stop_container(&container_name, None).await;
@@ -767,6 +777,11 @@ pub async fn ensure_container(
         format!("REGISTRY_HOST={registry_host}"),
         format!("REGISTRY_INSECURE={registry_insecure}"),
         format!("IMAGE_REPO_BASE={image_repo_base}"),
+        // Deterministic k3s node name so the node identity survives container
+        // recreation (e.g. after an image upgrade). Without this, k3s uses
+        // the container ID as the hostname/node name, which changes on every
+        // container recreate and triggers stale-node PVC cleanup.
+        format!("OPENSHELL_NODE_NAME={}", node_name(name)),
     ];
     if let Some(endpoint) = registry_endpoint {
         env_vars.push(format!("REGISTRY_ENDPOINT={endpoint}"));
@@ -852,6 +867,14 @@ pub async fn ensure_container(
 
     let config = ContainerCreateBody {
         image: Some(image_ref.to_string()),
+        // Set the container hostname to the deterministic node name.
+        // k3s uses the container hostname as its default node name.  Without
+        // this, Docker defaults to the container ID (first 12 hex chars),
+        // which changes on every container recreation and can cause
+        // `clean_stale_nodes` to delete the wrong node on resume.  The
+        // hostname persists across container stop/start cycles, ensuring a
+        // stable node identity.
+        hostname: Some(node_name(name)),
         cmd: Some(cmd),
         env,
         exposed_ports: Some(exposed_ports),
