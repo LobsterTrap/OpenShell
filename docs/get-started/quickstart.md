@@ -32,7 +32,9 @@ This page gets you from zero to a running, policy-enforced sandbox in two comman
 
 Before you begin, make sure you have:
 
-- Docker Desktop or Podman running on your machine. On Linux with rootless Podman, refer to {doc}`../sandboxes/manage-gateways` for additional setup.
+- Docker Desktop or Podman running on your machine.
+  - **Linux**: refer to {doc}`install-podman-linux` for rootless and rootful setup.
+  - **macOS**: refer to {doc}`install-podman-macos` for Podman Machine setup.
 
 For a complete list of requirements, refer to {doc}`../reference/support-matrix`.
 
