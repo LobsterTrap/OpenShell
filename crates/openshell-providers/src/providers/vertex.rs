@@ -48,12 +48,17 @@ impl ProviderPlugin for VertexProvider {
             }
 
             // Generate OAuth token from Application Default Credentials
-            // This replaces the project ID credential with an actual OAuth token
-            // that can be used for API authentication
-            let rt = tokio::runtime::Runtime::new()
-                .map_err(|e| ProviderError::UnsupportedProvider(format!("failed to create tokio runtime: {e}")))?;
+            // Try to generate token, but don't fail if we're in a nested runtime context
+            let token = std::thread::spawn(|| {
+                tokio::runtime::Runtime::new()
+                    .ok()
+                    .and_then(|rt| rt.block_on(generate_oauth_token()))
+            })
+            .join()
+            .ok()
+            .flatten();
 
-            if let Some(token) = rt.block_on(generate_oauth_token()) {
+            if let Some(token) = token {
                 // Store the OAuth token as VERTEX_OAUTH_TOKEN
                 // The inference router will use this as the Bearer token
                 provider.credentials.insert("VERTEX_OAUTH_TOKEN".to_string(), token);
