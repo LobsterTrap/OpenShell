@@ -179,6 +179,7 @@ The following provider types are supported.
 | `nvidia` | `NVIDIA_API_KEY` | NVIDIA API Catalog |
 | `openai` | `OPENAI_API_KEY` | Any OpenAI-compatible endpoint. Set `--config OPENAI_BASE_URL` to point to the provider. Refer to {doc}`/inference/configure`. |
 | `opencode` | `OPENCODE_API_KEY`, `OPENROUTER_API_KEY`, `OPENAI_API_KEY` | opencode tool |
+| `vertex` | `ANTHROPIC_VERTEX_PROJECT_ID` | Google Cloud Vertex AI with Claude models. Requires GCP Application Default Credentials. **Note:** OAuth authentication not yet fully implemented. |
 
 :::{tip}
 Use the `generic` type for any service not listed above. You define the
