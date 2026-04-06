@@ -35,6 +35,10 @@ BuildRequires:  pkg-config
 # Python sub-package build dependencies
 BuildRequires:  python3-devel
 
+# Runtime: container runtime for gateway lifecycle (start/stop/destroy).
+# Podman is preferred; Docker is also supported via --container-runtime flag.
+Recommends:     podman
+
 %description
 OpenShell provides safe, sandboxed runtimes for autonomous AI agents.
 It offers a CLI for managing gateways, sandboxes, and providers with
