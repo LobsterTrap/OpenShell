@@ -90,12 +90,13 @@ mise run cluster:build:full
 ```
 
 This command:
-- Builds the gateway image
+- Builds the gateway and cluster images
 - Starts a local container registry at `127.0.0.1:5000`
-- Builds the cluster image
-- Pushes images to the local registry
+- Pushes the gateway image to the local registry
 - Bootstraps a k3s cluster inside a Podman container
-- Deploys the OpenShell gateway
+- Deploys and starts the OpenShell gateway
+
+**Note:** This command builds the images AND starts the gateway in one step. The gateway will be running when the command completes.
 
 Or run the script directly:
 
@@ -119,8 +120,16 @@ cargo install --path crates/openshell-cli --root ~/.local
 
 ## Create a Sandbox
 
+The gateway is now running. Create a sandbox to test it:
+
 ```console
 openshell sandbox create
+```
+
+Verify the gateway is healthy:
+
+```console
+openshell gateway info
 ```
 
 ## Cleanup
