@@ -664,7 +664,11 @@ pub async fn ensure_container(
     // Rootless Podman with cgroupns=host mounts the host cgroup tree
     // read-only (user namespace restriction), so it needs a private cgroup
     // namespace where the delegated controllers are writable.
-    let cgroupns = if runtime == ContainerRuntime::Podman {
+    // Rootful Podman (uid 0) can use host cgroupns just like Docker since
+    // root has full write access to the host cgroup tree.
+    let is_rootless_podman = runtime == ContainerRuntime::Podman
+        && crate::container_runtime::is_rootless();
+    let cgroupns = if is_rootless_podman {
         HostConfigCgroupnsModeEnum::PRIVATE
     } else {
         HostConfigCgroupnsModeEnum::HOST
