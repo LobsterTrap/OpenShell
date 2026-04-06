@@ -18,10 +18,37 @@ env:
 
 jobs:
   # ---------------------------------------------------------------------------
+  # Compute the Cargo version from git tags so container binaries report a
+  # real version instead of the 0.0.0 placeholder in Cargo.toml.
+  # ---------------------------------------------------------------------------
+  compute-versions:
+    name: Compute versions
+    runs-on: ubuntu-latest
+    outputs:
+      cargo_version: ${{ steps.v.outputs.cargo }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fetch tags
+        run: git fetch --tags --force
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Compute cargo version
+        id: v
+        run: |
+          set -euo pipefail
+          echo "cargo=$(uv run python tasks/scripts/release.py get-version --cargo)" >> "$GITHUB_OUTPUT"
+
+  # ---------------------------------------------------------------------------
   # Build container images natively on per-arch runners
   # ---------------------------------------------------------------------------
   build:
     name: Build ${{ matrix.component }} (${{ matrix.arch }})
+    needs: [compute-versions]
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     strategy:
@@ -79,6 +106,8 @@ jobs:
           platforms: ${{ matrix.platform }}
           push: true
           tags: ${{ env.IMAGE_REGISTRY }}/${{ matrix.component }}:${{ github.sha }}-${{ matrix.arch }}
+          build-args: |
+            OPENSHELL_CARGO_VERSION=${{ needs.compute-versions.outputs.cargo_version }}
           cache-from: type=gha,scope=${{ matrix.component }}-${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.component }}-${{ matrix.arch }}
 

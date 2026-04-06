@@ -11,12 +11,16 @@ This page lists the platform, software, runtime, and kernel requirements for run
 
 OpenShell publishes multi-architecture container images for `linux/amd64` and `linux/arm64`. The CLI is supported on the following host platforms:
 
-| Platform                         | Architecture          | Status    |
-| -------------------------------- | --------------------- | --------- |
-| Linux (Debian/Ubuntu)            | x86_64 (amd64)        | Supported |
-| Linux (Debian/Ubuntu)            | aarch64 (arm64)       | Supported |
-| macOS (Docker Desktop)           | Apple Silicon (arm64) | Supported |
-| Windows (WSL 2 + Docker Desktop) | x86_64                | Experimental  |
+| Platform                         | Architecture          | Status       |
+| -------------------------------- | --------------------- | ------------ |
+| Linux (Debian/Ubuntu)            | x86_64 (amd64)        | Supported    |
+| Linux (Debian/Ubuntu)            | aarch64 (arm64)       | Supported    |
+| Linux (Fedora 43+)               | x86_64 (amd64)        | Supported    |
+| Linux (Fedora 43+)               | aarch64 (arm64)       | Supported    |
+| Linux (RHEL/CentOS Stream 10+)   | x86_64 (amd64)        | Supported    |
+| Linux (RHEL/CentOS Stream 10+)   | aarch64 (arm64)       | Supported    |
+| macOS (Docker Desktop)           | Apple Silicon (arm64) | Supported    |
+| Windows (WSL 2 + Docker Desktop) | x86_64                | Experimental |
 
 ## Software Prerequisites
 

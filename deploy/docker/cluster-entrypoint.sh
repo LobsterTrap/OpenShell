@@ -80,6 +80,21 @@ fi
 
 IPTABLES=$([ "${USE_IPTABLES_LEGACY:-0}" = "1" ] && echo iptables-legacy || echo iptables)
 
+# ---------------------------------------------------------------------------
+# Select kube-proxy mode
+# ---------------------------------------------------------------------------
+# k3s defaults kube-proxy to iptables mode, which requires the legacy
+# ip_tables kernel module. Modern distros (Fedora 41+, RHEL 10+) load only
+# nf_tables by default and may not have the legacy modules available.
+# k3s v1.35+ (Kubernetes 1.35) supports the native nftables proxy mode at
+# GA stability. Detect nftables availability and prefer it; fall back to the
+# default iptables mode on older kernels.
+KUBE_PROXY_MODE=""
+if command -v nft >/dev/null 2>&1 && nft list tables >/dev/null 2>&1; then
+	echo "Detected nftables kernel support — using kube-proxy nftables mode"
+	KUBE_PROXY_MODE="--kube-proxy-arg=proxy-mode=nftables"
+fi
+
 RESOLV_CONF="/etc/rancher/k3s/resolv.conf"
 
 has_default_route() {
@@ -636,4 +651,4 @@ wait_for_default_route
 # k3s v1.35.2+ no longer accepts --resolv-conf as a top-level server flag;
 # it must be passed via --kubelet-arg instead.
 # shellcheck disable=SC2086
-exec /bin/k3s "$@" --kubelet-arg=resolv-conf="$RESOLV_CONF" $EXTRA_KUBELET_ARGS
+exec /bin/k3s "$@" --kubelet-arg=resolv-conf="$RESOLV_CONF" $EXTRA_KUBELET_ARGS $KUBE_PROXY_MODE

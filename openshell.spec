@@ -31,6 +31,7 @@ BuildRequires:  gcc-c++
 BuildRequires:  make
 BuildRequires:  cmake
 BuildRequires:  pkg-config
+BuildRequires:  systemd-rpm-macros
 
 # Python sub-package build dependencies
 BuildRequires:  python3-devel
@@ -48,9 +49,12 @@ LLM inference routing.
 # --- Python SDK sub-package ---
 %package -n python3-%{name}
 Summary:        OpenShell Python SDK for agent execution and management
-Requires:       python3-cloudpickle >= 3.0
-Requires:       python3-grpcio >= 1.60
-Requires:       python3-protobuf >= 4.25
+# Use Recommends instead of Requires because Fedora 43+ ships older
+# versions of grpcio (1.48) and protobuf (3.19) than the SDK needs.
+# Users on distros with older packages can install these via pip/uv.
+Recommends:     python3-cloudpickle >= 3.0
+Recommends:     python3-grpcio >= 1.60
+Recommends:     python3-protobuf >= 4.25
 Recommends:     %{name}
 
 %description -n python3-%{name}
@@ -80,11 +84,30 @@ grep -q 'version = "%{version}"' Cargo.toml || (echo "ERROR: Cargo.toml version 
 %build
 # Build only the CLI binary
 export CARGO_BUILD_JOBS=%{_smp_build_ncpus}
+# Set the default container image tag to match the midstream GHCR registry.
+# Without this, the binary defaults to "dev" which does not exist in the
+# LobsterTrap registry (only "midstream" tags are published).
+export OPENSHELL_IMAGE_TAG=midstream
 cargo build --release --bin openshell
 
 %install
 # Install CLI binary
 install -Dpm 0755 target/release/%{name} %{buildroot}%{_bindir}/%{name}
+
+# Install modules-load.d config for legacy iptables kernel modules.
+# k3s (used by the gateway cluster) bundles its own legacy iptables binary
+# for flannel CNI. Modern distros (Fedora 41+, RHEL 10+) only load nf_tables
+# by default, so these legacy modules must be explicitly loaded.
+install -d %{buildroot}%{_modulesloaddir}
+cat > %{buildroot}%{_modulesloaddir}/%{name}.conf << 'EOF'
+# Load legacy iptables kernel modules required by k3s flannel CNI.
+# Modern kernels use nf_tables by default; these modules provide the
+# legacy iptables interface that k3s's bundled iptables-legacy needs.
+ip_tables
+iptable_nat
+iptable_filter
+iptable_mangle
+EOF
 
 # Install Python SDK modules (test files are intentionally excluded)
 install -d %{buildroot}%{python3_sitelib}/%{name}
@@ -129,6 +152,7 @@ PYTHONPATH=%{buildroot}%{python3_sitelib} %{python3} -c "from importlib.metadata
 %license LICENSE
 %doc README.md
 %{_bindir}/%{name}
+%{_modulesloaddir}/%{name}.conf
 
 %files -n python3-%{name}
 %license LICENSE
