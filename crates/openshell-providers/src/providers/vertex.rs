@@ -2,7 +2,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::{
-    ProviderDiscoverySpec, ProviderError, ProviderPlugin, RealDiscoveryContext, discover_with_spec,
+    DiscoveredProvider, ProviderDiscoverySpec, ProviderError, ProviderPlugin, RealDiscoveryContext,
+    discover_with_spec,
 };
 
 pub struct VertexProvider;
@@ -12,13 +13,54 @@ pub const SPEC: ProviderDiscoverySpec = ProviderDiscoverySpec {
     credential_env_vars: &["ANTHROPIC_VERTEX_PROJECT_ID"],
 };
 
+// Additional config keys for Vertex AI
+const VERTEX_CONFIG_KEYS: &[&str] = &["ANTHROPIC_VERTEX_REGION"];
+
+/// Generate an OAuth token from GCP Application Default Credentials for Vertex AI.
+///
+/// Returns `None` if ADC is not configured or token generation fails.
+async fn generate_oauth_token() -> Option<String> {
+    // Try to find an appropriate token provider (checks ADC, service account, metadata server, etc.)
+    let provider = gcp_auth::provider().await.ok()?;
+
+    // Get token for Vertex AI scope
+    // Vertex AI uses the Cloud Platform scope
+    let scopes = &["https://www.googleapis.com/auth/cloud-platform"];
+    let token = provider.token(scopes).await.ok()?;
+
+    Some(token.as_str().to_string())
+}
+
 impl ProviderPlugin for VertexProvider {
     fn id(&self) -> &'static str {
         SPEC.id
     }
 
-    fn discover_existing(&self) -> Result<Option<crate::DiscoveredProvider>, ProviderError> {
-        discover_with_spec(&SPEC, &RealDiscoveryContext)
+    fn discover_existing(&self) -> Result<Option<DiscoveredProvider>, ProviderError> {
+        let mut discovered = discover_with_spec(&SPEC, &RealDiscoveryContext)?;
+
+        // Add region config if present
+        if let Some(ref mut provider) = discovered {
+            for &key in VERTEX_CONFIG_KEYS {
+                if let Ok(value) = std::env::var(key) {
+                    provider.config.insert(key.to_string(), value);
+                }
+            }
+
+            // Generate OAuth token from Application Default Credentials
+            // This replaces the project ID credential with an actual OAuth token
+            // that can be used for API authentication
+            let rt = tokio::runtime::Runtime::new()
+                .map_err(|e| ProviderError::UnsupportedProvider(format!("failed to create tokio runtime: {e}")))?;
+
+            if let Some(token) = rt.block_on(generate_oauth_token()) {
+                // Store the OAuth token as VERTEX_OAUTH_TOKEN
+                // The inference router will use this as the Bearer token
+                provider.credentials.insert("VERTEX_OAUTH_TOKEN".to_string(), token);
+            }
+        }
+
+        Ok(discovered)
     }
 
     fn credential_env_vars(&self) -> &'static [&'static str] {

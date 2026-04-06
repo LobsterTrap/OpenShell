@@ -88,12 +88,15 @@ static NVIDIA_PROFILE: InferenceProviderProfile = InferenceProviderProfile {
 
 static VERTEX_PROFILE: InferenceProviderProfile = InferenceProviderProfile {
     provider_type: "vertex",
+    // Base URL template - actual URL constructed at request time with project/region/model
     default_base_url: "https://us-central1-aiplatform.googleapis.com/v1",
     protocols: ANTHROPIC_PROTOCOLS,
-    credential_key_names: &["ANTHROPIC_VERTEX_PROJECT_ID"],
-    base_url_config_keys: &["ANTHROPIC_VERTEX_REGION", "VERTEX_BASE_URL"],
-    auth: AuthHeader::Custom("x-api-key"),
-    default_headers: &[("anthropic-version", "2023-06-01")],
+    // Look for OAuth token first, fallback to project ID (for manual config)
+    credential_key_names: &["VERTEX_OAUTH_TOKEN", "ANTHROPIC_VERTEX_PROJECT_ID"],
+    base_url_config_keys: &["VERTEX_BASE_URL", "ANTHROPIC_VERTEX_REGION"],
+    // Vertex uses OAuth Bearer tokens, not x-api-key
+    auth: AuthHeader::Bearer,
+    default_headers: &[("anthropic-version", "vertex-2023-10-16")],
 };
 
 /// Look up the inference provider profile for a given provider type.
