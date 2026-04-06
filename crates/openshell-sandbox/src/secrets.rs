@@ -10,6 +10,25 @@ const PLACEHOLDER_PREFIX: &str = "openshell:resolve:env:";
 /// Public access to the placeholder prefix for fail-closed scanning in other modules.
 pub(crate) const PLACEHOLDER_PREFIX_PUBLIC: &str = PLACEHOLDER_PREFIX;
 
+/// Credentials that should be injected as actual values into the sandbox environment
+/// instead of being converted to placeholders.
+///
+/// These credentials are needed by tools (like `claude` CLI) that read environment
+/// variables directly rather than making HTTP requests through the proxy.
+///
+/// **Security consideration**: These values are visible to all sandbox processes via
+/// `/proc/<pid>/environ`, unlike placeholder-based credentials which are only resolved
+/// within HTTP requests. Only include credentials here when direct env var access is
+/// required for tool compatibility.
+fn direct_inject_credentials() -> &'static [&'static str] {
+    &[
+        // Vertex AI credentials for claude CLI
+        "ANTHROPIC_VERTEX_PROJECT_ID",
+        "VERTEX_OAUTH_TOKEN",
+        "ANTHROPIC_VERTEX_REGION",
+    ]
+}
+
 /// Characters that are valid in an env var key name (used to extract
 /// placeholder boundaries within concatenated strings like path segments).
 fn is_env_key_char(b: u8) -> bool {
@@ -70,6 +89,19 @@ impl SecretResolver {
     pub(crate) fn from_provider_env(
         provider_env: HashMap<String, String>,
     ) -> (HashMap<String, String>, Option<Self>) {
+        Self::from_provider_env_with_direct_inject(provider_env, &direct_inject_credentials())
+    }
+
+    /// Create a resolver from provider environment with selective direct injection.
+    ///
+    /// Credentials matching keys in `direct_inject` are injected as actual values
+    /// into the child environment (for tools like `claude` CLI that need real env vars).
+    /// All other credentials are converted to `openshell:resolve:env:*` placeholders
+    /// that get resolved by the HTTP proxy.
+    pub(crate) fn from_provider_env_with_direct_inject(
+        provider_env: HashMap<String, String>,
+        direct_inject: &[&str],
+    ) -> (HashMap<String, String>, Option<Self>) {
         if provider_env.is_empty() {
             return (HashMap::new(), None);
         }
@@ -78,12 +110,25 @@ impl SecretResolver {
         let mut by_placeholder = HashMap::with_capacity(provider_env.len());
 
         for (key, value) in provider_env {
-            let placeholder = placeholder_for_env_key(&key);
-            child_env.insert(key, placeholder.clone());
-            by_placeholder.insert(placeholder, value);
+            // Check if this credential should be injected directly
+            if direct_inject.contains(&key.as_str()) {
+                // Direct injection: put actual value in environment
+                child_env.insert(key, value);
+            } else {
+                // Placeholder: will be resolved by HTTP proxy
+                let placeholder = placeholder_for_env_key(&key);
+                child_env.insert(key, placeholder.clone());
+                by_placeholder.insert(placeholder, value);
+            }
         }
 
-        (child_env, Some(Self { by_placeholder }))
+        let resolver = if by_placeholder.is_empty() {
+            None
+        } else {
+            Some(Self { by_placeholder })
+        };
+
+        (child_env, resolver)
     }
 
     /// Resolve a placeholder string to the real secret value.
