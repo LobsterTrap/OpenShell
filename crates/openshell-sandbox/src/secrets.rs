@@ -26,6 +26,7 @@ fn direct_inject_credentials() -> &'static [&'static str] {
         "ANTHROPIC_VERTEX_PROJECT_ID",
         "VERTEX_OAUTH_TOKEN",
         "ANTHROPIC_VERTEX_REGION",
+        "CLAUDE_CODE_USE_VERTEX",
     ]
 }
 

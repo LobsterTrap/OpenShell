@@ -47,6 +47,10 @@ impl ProviderPlugin for VertexProvider {
                 }
             }
 
+            // Set CLAUDE_CODE_USE_VERTEX=1 to enable Vertex AI in claude CLI
+            // Must be in credentials (not config) to be injected into sandbox environment
+            provider.credentials.insert("CLAUDE_CODE_USE_VERTEX".to_string(), "1".to_string());
+
             // Generate OAuth token from Application Default Credentials
             // Try to generate token, but don't fail if we're in a nested runtime context
             let token = std::thread::spawn(|| {
