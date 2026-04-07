@@ -132,13 +132,36 @@ Verify the gateway is healthy:
 openshell gateway info
 ```
 
+## Rebuilding After Code Changes
+
+If you're developing OpenShell and need to test code changes, use the rebuild script:
+
+```console
+bash scripts/rebuild-cluster.sh
+```
+
+This stops the cluster, removes the old image, rebuilds with your changes, and restarts. After rebuilding:
+1. Recreate providers (gateway database was reset)
+2. Reconfigure inference routing if needed
+3. Recreate sandboxes
+
 ## Cleanup
 
-To remove all OpenShell resources and optionally the Podman machine:
+### Quick Rebuild (Development)
+
+```console
+bash scripts/rebuild-cluster.sh
+```
+
+Rebuilds the cluster with latest code changes. Use this during development.
+
+### Full Cleanup (Start Fresh)
 
 ```console
 bash cleanup-openshell-podman-macos.sh
 ```
+
+Removes all OpenShell resources and optionally the Podman machine. Use this to completely reset your installation.
 
 ## Troubleshooting
 

@@ -137,13 +137,24 @@ async fn send_backend_request(
 
     // Set the "model" field in the JSON body to the route's configured model so the
     // backend receives the correct model ID regardless of what the client sent.
+    //
+    // Exception: Vertex AI's :streamRawPredict endpoint expects the model in the URL
+    // path (already handled in build_backend_url), not in the request body.
+    let is_vertex_ai = route.endpoint.contains("aiplatform.googleapis.com");
+
     let body = match serde_json::from_slice::<serde_json::Value>(&body) {
         Ok(mut json) => {
             if let Some(obj) = json.as_object_mut() {
-                obj.insert(
-                    "model".to_string(),
-                    serde_json::Value::String(route.model.clone()),
-                );
+                if is_vertex_ai {
+                    // Remove model field for Vertex AI (it's in the URL path)
+                    obj.remove("model");
+                } else {
+                    // Insert/override model field for standard backends
+                    obj.insert(
+                        "model".to_string(),
+                        serde_json::Value::String(route.model.clone()),
+                    );
+                }
             }
             bytes::Bytes::from(serde_json::to_vec(&json).unwrap_or_else(|_| body.to_vec()))
         }
