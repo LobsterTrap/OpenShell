@@ -878,6 +878,11 @@ pub async fn ensure_container(
         env_vars.push("GPU_ENABLED=true".to_string());
     }
 
+    // Pass the container runtime to the entrypoint so it can select the
+    // appropriate networking stack (nftables kube-proxy for Podman, iptables
+    // DNS proxy for Docker, etc.).
+    env_vars.push(format!("CONTAINER_RUNTIME={}", runtime.binary_name()));
+
     let env = Some(env_vars);
 
     // Set the health check explicitly on the container config so it works

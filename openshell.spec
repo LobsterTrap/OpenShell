@@ -39,10 +39,6 @@ BuildRequires:  python3-devel
 # Runtime: container runtime for gateway lifecycle (start/stop/destroy).
 # Podman is preferred; Docker is also supported via --container-runtime flag.
 Recommends:     podman
-# When Podman is the container runtime, podman-docker provides the
-# /var/run/docker.sock symlink and `docker` CLI alias that third-party
-# libraries (e.g., bollard) expect.
-Recommends:     podman-docker
 
 %description
 OpenShell provides safe, sandboxed runtimes for autonomous AI agents.
@@ -98,19 +94,18 @@ cargo build --release --bin openshell
 # Install CLI binary
 install -Dpm 0755 target/release/%{name} %{buildroot}%{_bindir}/%{name}
 
-# Install modules-load.d config for legacy iptables kernel modules.
-# k3s (used by the gateway cluster) bundles its own legacy iptables binary
-# for flannel CNI. Modern distros (Fedora 41+, RHEL 10+) only load nf_tables
-# by default, so these legacy modules must be explicitly loaded.
+# Install modules-load.d config for br_netfilter.
+# br_netfilter makes the kernel pass bridged (pod-to-pod) traffic through
+# netfilter hooks so kube-proxy DNAT rules (iptables or nftables) apply to
+# ClusterIP service traffic. Legacy iptables modules are not required —
+# kube-proxy uses native nftables under Podman, and the iptables binary on
+# modern distros (Fedora 41+, RHEL 10+) is iptables-nft which uses the
+# nf_tables kernel path.
 install -d %{buildroot}%{_modulesloaddir}
 cat > %{buildroot}%{_modulesloaddir}/%{name}.conf << 'EOF'
-# Load legacy iptables kernel modules required by k3s flannel CNI.
-# Modern kernels use nf_tables by default; these modules provide the
-# legacy iptables interface that k3s's bundled iptables-legacy needs.
-ip_tables
-iptable_nat
-iptable_filter
-iptable_mangle
+# Load br_netfilter for K3s bridge networking.
+# Required so kube-proxy DNAT rules (iptables or nftables) apply to
+# bridged pod-to-pod traffic for ClusterIP service resolution.
 br_netfilter
 EOF
 
@@ -154,9 +149,9 @@ echo "rpm" > %{buildroot}%{python3_sitelib}/%{name}-%{version}.dist-info/INSTALL
 touch %{buildroot}%{python3_sitelib}/%{name}-%{version}.dist-info/RECORD
 
 %post
-# Load kernel modules immediately so a reboot is not required after
-# initial installation. The modules-load.d config handles subsequent boots.
-modprobe -a ip_tables iptable_nat iptable_filter iptable_mangle br_netfilter > /dev/null 2>&1 || :
+# Load br_netfilter immediately so a reboot is not required after install.
+# The modules-load.d config handles subsequent boots.
+modprobe br_netfilter > /dev/null 2>&1 || :
 %sysctl_apply 99-%{name}.conf
 
 %check
