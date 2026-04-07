@@ -49,7 +49,9 @@ impl ProviderPlugin for VertexProvider {
 
             // Set CLAUDE_CODE_USE_VERTEX=1 to enable Vertex AI in claude CLI
             // Must be in credentials (not config) to be injected into sandbox environment
-            provider.credentials.insert("CLAUDE_CODE_USE_VERTEX".to_string(), "1".to_string());
+            provider
+                .credentials
+                .insert("CLAUDE_CODE_USE_VERTEX".to_string(), "1".to_string());
 
             // Generate OAuth token from Application Default Credentials
             // Try to generate token, but don't fail if we're in a nested runtime context
@@ -65,7 +67,9 @@ impl ProviderPlugin for VertexProvider {
             if let Some(token) = token {
                 // Store the OAuth token as VERTEX_OAUTH_TOKEN
                 // The inference router will use this as the Bearer token
-                provider.credentials.insert("VERTEX_OAUTH_TOKEN".to_string(), token);
+                provider
+                    .credentials
+                    .insert("VERTEX_OAUTH_TOKEN".to_string(), token);
             }
         }
 
@@ -85,8 +89,8 @@ mod tests {
 
     #[test]
     fn discovers_vertex_env_credentials() {
-        let ctx = MockDiscoveryContext::new()
-            .with_env("ANTHROPIC_VERTEX_PROJECT_ID", "my-gcp-project");
+        let ctx =
+            MockDiscoveryContext::new().with_env("ANTHROPIC_VERTEX_PROJECT_ID", "my-gcp-project");
         let discovered = discover_with_spec(&SPEC, &ctx)
             .expect("discovery")
             .expect("provider");
