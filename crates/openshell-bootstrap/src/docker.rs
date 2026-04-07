@@ -273,6 +273,23 @@ pub(crate) fn connect_local_auto() -> Result<Docker> {
     connect_local(runtime)
 }
 
+/// Connect to the local container runtime for an existing gateway.
+///
+/// Resolution order:
+/// 1. Stored runtime from gateway metadata (if metadata exists)
+/// 2. Auto-detect runtime via `detect_runtime` (propagates error on failure)
+///
+/// This is used by code paths that have a gateway `name` but no `runtime`
+/// in scope. Unlike `connect_local_auto()`, this checks metadata first so
+/// that gateways deployed with a specific runtime reconnect to the same one.
+pub(crate) fn connect_for_gateway(name: &str) -> Result<Docker> {
+    let runtime = match crate::metadata::get_gateway_metadata(name) {
+        Some(m) => m.container_runtime,
+        None => crate::container_runtime::detect_runtime(None)?,
+    };
+    connect_local(runtime)
+}
+
 /// Build a rich, user-friendly error when a container runtime is not reachable.
 fn runtime_not_reachable_error(
     runtime: ContainerRuntime,

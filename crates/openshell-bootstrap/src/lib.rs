@@ -669,12 +669,7 @@ pub async fn extract_and_store_pki(
 ) -> Result<()> {
     let docker = match remote {
         Some(r) => create_ssh_docker_client(r).await?,
-        None => {
-            let runtime = get_gateway_metadata(name)
-                .map(|m| m.container_runtime)
-                .unwrap_or_else(|| detect_runtime(None).unwrap_or(ContainerRuntime::Docker));
-            docker::connect_local(runtime)?
-        }
+        None => docker::connect_for_gateway(name)?,
     };
     let cname = docker::find_gateway_container(&docker, port).await?;
     let bundle = load_existing_pki_bundle(&docker, &cname, constants::KUBECONFIG_PATH)
@@ -717,12 +712,7 @@ pub async fn gateway_container_logs<W: std::io::Write>(
 
     let docker = match remote {
         Some(remote_opts) => create_ssh_docker_client(remote_opts).await?,
-        None => {
-            let runtime = get_gateway_metadata(name)
-                .map(|m| m.container_runtime)
-                .unwrap_or_else(|| detect_runtime(None).unwrap_or(ContainerRuntime::Docker));
-            docker::connect_local(runtime)?
-        }
+        None => docker::connect_for_gateway(name)?,
     };
 
     let container = container_name(name);
