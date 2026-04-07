@@ -10,7 +10,6 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use bollard::Docker;
 use bollard::query_parameters::BuildImageOptionsBuilder;
 use futures::StreamExt;
 use miette::{IntoDiagnostic, Result, WrapErr};
@@ -46,9 +45,8 @@ pub async fn build_and_push_image(
     on_log(format!(
         "Pushing image {tag} into gateway \"{gateway_name}\""
     ));
-    let local_docker = Docker::connect_with_local_defaults()
-        .into_diagnostic()
-        .wrap_err("failed to connect to local Docker daemon")?;
+    let local_docker = crate::docker::connect_local_auto()
+        .wrap_err("failed to connect to local container runtime")?;
     let container = container_name(gateway_name);
     let images: Vec<&str> = vec![tag];
     push_local_images(&local_docker, &local_docker, &container, &images, on_log).await?;
@@ -68,9 +66,8 @@ async fn build_image(
     build_args: &HashMap<String, String>,
     on_log: &mut impl FnMut(String),
 ) -> Result<()> {
-    let docker = Docker::connect_with_local_defaults()
-        .into_diagnostic()
-        .wrap_err("failed to connect to local Docker daemon")?;
+    let docker = crate::docker::connect_local_auto()
+        .wrap_err("failed to connect to local container runtime")?;
 
     // Compute the relative path of the Dockerfile within the context.
     let dockerfile_relative = dockerfile_path

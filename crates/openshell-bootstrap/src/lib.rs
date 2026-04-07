@@ -544,7 +544,7 @@ where
                 .collect();
             if !images.is_empty() {
                 log("[status] Deploying components".to_string());
-                let local_docker = Docker::connect_with_local_defaults().into_diagnostic()?;
+                let local_docker = docker::connect_local(runtime)?;
                 let container = container_name(&name);
                 let on_log_ref = Arc::clone(&on_log);
                 let mut push_log = move |msg: String| {
@@ -669,7 +669,7 @@ pub async fn extract_and_store_pki(
 ) -> Result<()> {
     let docker = match remote {
         Some(r) => create_ssh_docker_client(r).await?,
-        None => Docker::connect_with_local_defaults().into_diagnostic()?,
+        None => docker::connect_for_gateway(name)?,
     };
     let cname = docker::find_gateway_container(&docker, port).await?;
     let bundle = load_existing_pki_bundle(&docker, &cname, constants::KUBECONFIG_PATH)
@@ -684,7 +684,7 @@ pub async fn ensure_gateway_image(
     registry_username: Option<&str>,
     registry_token: Option<&str>,
 ) -> Result<String> {
-    let docker = Docker::connect_with_local_defaults().into_diagnostic()?;
+    let docker = docker::connect_local_auto()?;
     let image_ref = format!("{}:{version}", image::DEFAULT_GATEWAY_IMAGE);
     ensure_image(&docker, &image_ref, registry_username, registry_token).await?;
     Ok(image_ref)
@@ -712,7 +712,7 @@ pub async fn gateway_container_logs<W: std::io::Write>(
 
     let docker = match remote {
         Some(remote_opts) => create_ssh_docker_client(remote_opts).await?,
-        None => Docker::connect_with_local_defaults().into_diagnostic()?,
+        None => docker::connect_for_gateway(name)?,
     };
 
     let container = container_name(name);
@@ -765,7 +765,7 @@ pub async fn gateway_container_logs<W: std::io::Write>(
 /// Returns an empty string on any Docker/connection error so callers don't
 /// need to worry about error handling.
 pub async fn fetch_gateway_logs(name: &str, n: usize) -> String {
-    let docker = match Docker::connect_with_local_defaults() {
+    let docker = match docker::connect_local_auto() {
         Ok(d) => d,
         Err(_) => return String::new(),
     };

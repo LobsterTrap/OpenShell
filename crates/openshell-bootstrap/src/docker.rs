@@ -263,6 +263,33 @@ pub(crate) fn connect_local(runtime: ContainerRuntime) -> Result<Docker> {
     }
 }
 
+/// Connect to the local container runtime with auto-detection.
+///
+/// This is a convenience wrapper for code paths that need a Docker client
+/// but don't have a `ContainerRuntime` value available. It auto-detects
+/// the runtime (Podman preferred) and connects via `connect_local`.
+pub(crate) fn connect_local_auto() -> Result<Docker> {
+    let runtime = crate::container_runtime::detect_runtime(None)?;
+    connect_local(runtime)
+}
+
+/// Connect to the local container runtime for an existing gateway.
+///
+/// Resolution order:
+/// 1. Stored runtime from gateway metadata (if metadata exists)
+/// 2. Auto-detect runtime via `detect_runtime` (propagates error on failure)
+///
+/// This is used by code paths that have a gateway `name` but no `runtime`
+/// in scope. Unlike `connect_local_auto()`, this checks metadata first so
+/// that gateways deployed with a specific runtime reconnect to the same one.
+pub(crate) fn connect_for_gateway(name: &str) -> Result<Docker> {
+    let runtime = match crate::metadata::get_gateway_metadata(name) {
+        Some(m) => m.container_runtime,
+        None => crate::container_runtime::detect_runtime(None)?,
+    };
+    connect_local(runtime)
+}
+
 /// Build a rich, user-friendly error when a container runtime is not reachable.
 fn runtime_not_reachable_error(
     runtime: ContainerRuntime,
@@ -850,6 +877,11 @@ pub async fn ensure_container(
     if !device_ids.is_empty() {
         env_vars.push("GPU_ENABLED=true".to_string());
     }
+
+    // Pass the container runtime to the entrypoint so it can select the
+    // appropriate networking stack (nftables kube-proxy for Podman, iptables
+    // DNS proxy for Docker, etc.).
+    env_vars.push(format!("CONTAINER_RUNTIME={}", runtime.binary_name()));
 
     let env = Some(env_vars);
 
