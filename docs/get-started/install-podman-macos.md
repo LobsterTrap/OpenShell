@@ -51,7 +51,7 @@ brew install podman mise
 
 The `scripts/setup-podman-macos.sh` script automates Podman Machine configuration:
 
-- Creates a dedicated `openshell` Podman machine (8 GB RAM, 4 CPUs)
+- Creates a dedicated `openshell` Podman machine (12 GB RAM, 4 CPUs)
 - Configures cgroup delegation (required for the embedded k3s cluster)
 - Stops conflicting machines (only one can run at a time, with user confirmation)
 
@@ -161,11 +161,11 @@ openshell sandbox create
 
 ### Build fails with memory errors
 
-Increase the Podman machine memory allocation:
+Increase the Podman machine memory allocation (default is 12 GB):
 
 ```console
 podman machine stop openshell
-podman machine set openshell --memory 8192
+podman machine set openshell --memory 16384
 podman machine start openshell
 ```
 

@@ -9,7 +9,7 @@
 set -euo pipefail
 
 MACHINE_NAME="${PODMAN_MACHINE_NAME:-openshell}"
-MEMORY="${PODMAN_MEMORY:-8192}"
+MEMORY="${PODMAN_MEMORY:-12288}"
 CPUS="${PODMAN_CPUS:-4}"
 
 echo "=== OpenShell Podman Setup for macOS ==="
