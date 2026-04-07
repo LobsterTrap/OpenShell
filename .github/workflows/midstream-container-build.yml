@@ -135,6 +135,7 @@ jobs:
           docker buildx imagetools create \
             -t "${{ env.IMAGE_REGISTRY }}/gateway:${{ github.sha }}" \
             -t "${{ env.IMAGE_REGISTRY }}/gateway:midstream" \
+            -t "${{ env.IMAGE_REGISTRY }}/gateway:dev" \
             "${{ env.IMAGE_REGISTRY }}/gateway:${{ github.sha }}-amd64" \
             "${{ env.IMAGE_REGISTRY }}/gateway:${{ github.sha }}-arm64"
 
@@ -159,5 +160,6 @@ jobs:
           docker buildx imagetools create \
             -t "${{ env.IMAGE_REGISTRY }}/cluster:${{ github.sha }}" \
             -t "${{ env.IMAGE_REGISTRY }}/cluster:midstream" \
+            -t "${{ env.IMAGE_REGISTRY }}/cluster:dev" \
             "${{ env.IMAGE_REGISTRY }}/cluster:${{ github.sha }}-amd64" \
             "${{ env.IMAGE_REGISTRY }}/cluster:${{ github.sha }}-arm64"
