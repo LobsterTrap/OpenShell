@@ -16,21 +16,6 @@ pub const SPEC: ProviderDiscoverySpec = ProviderDiscoverySpec {
 // Additional config keys for Vertex AI
 const VERTEX_CONFIG_KEYS: &[&str] = &["ANTHROPIC_VERTEX_REGION"];
 
-/// Generate an OAuth token from GCP Application Default Credentials for Vertex AI.
-///
-/// Returns `None` if ADC is not configured or token generation fails.
-async fn generate_oauth_token() -> Option<String> {
-    // Try to find an appropriate token provider (checks ADC, service account, metadata server, etc.)
-    let provider = gcp_auth::provider().await.ok()?;
-
-    // Get token for Vertex AI scope
-    // Vertex AI uses the Cloud Platform scope
-    let scopes = &["https://www.googleapis.com/auth/cloud-platform"];
-    let token = provider.token(scopes).await.ok()?;
-
-    Some(token.as_str().to_string())
-}
-
 impl ProviderPlugin for VertexProvider {
     fn id(&self) -> &'static str {
         SPEC.id
@@ -53,24 +38,10 @@ impl ProviderPlugin for VertexProvider {
                 .credentials
                 .insert("CLAUDE_CODE_USE_VERTEX".to_string(), "1".to_string());
 
-            // Generate OAuth token from Application Default Credentials
-            // Try to generate token, but don't fail if we're in a nested runtime context
-            let token = std::thread::spawn(|| {
-                tokio::runtime::Runtime::new()
-                    .ok()
-                    .and_then(|rt| rt.block_on(generate_oauth_token()))
-            })
-            .join()
-            .ok()
-            .flatten();
-
-            if let Some(token) = token {
-                // Store the OAuth token as VERTEX_OAUTH_TOKEN
-                // The inference router will use this as the Bearer token
-                provider
-                    .credentials
-                    .insert("VERTEX_OAUTH_TOKEN".to_string(), token);
-            }
+            // NOTE: We do NOT generate/store VERTEX_OAUTH_TOKEN here.
+            // OAuth tokens are short-lived (~1 hour) and storing them leads to stale token pollution.
+            // Instead, sandboxes generate fresh tokens on-demand from the uploaded ADC file
+            // (requires --upload ~/.config/gcloud/:.config/gcloud/ when creating sandbox).
         }
 
         Ok(discovered)

@@ -23,8 +23,10 @@ pub(crate) const PLACEHOLDER_PREFIX_PUBLIC: &str = PLACEHOLDER_PREFIX;
 fn direct_inject_credentials() -> &'static [&'static str] {
     &[
         // Vertex AI credentials for claude CLI
+        // NOTE: VERTEX_OAUTH_TOKEN is NOT included here - sandboxes generate
+        // fresh tokens on-demand from the uploaded ADC file instead of using
+        // a pre-generated (and likely expired) token from the provider database.
         "ANTHROPIC_VERTEX_PROJECT_ID",
-        "VERTEX_OAUTH_TOKEN",
         "ANTHROPIC_VERTEX_REGION",
         "CLAUDE_CODE_USE_VERTEX",
     ]

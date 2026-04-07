@@ -13,8 +13,6 @@ repository.workspace = true
 [dependencies]
 openshell-core = { path = "../openshell-core" }
 thiserror = { workspace = true }
-gcp_auth = "0.12"
-tokio = { workspace = true }
 
 [lints]
 workspace = true
