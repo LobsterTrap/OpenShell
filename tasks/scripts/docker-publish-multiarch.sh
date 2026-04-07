@@ -50,7 +50,7 @@ echo
 echo "Building multi-arch cluster image..."
 tasks/scripts/docker-build-image.sh cluster
 
-TAGS_TO_APPLY=("${EXTRA_TAGS[@]}")
+TAGS_TO_APPLY=(${EXTRA_TAGS[@]+"${EXTRA_TAGS[@]}"})
 if [[ "${TAG_LATEST}" == "true" ]]; then
 	TAGS_TO_APPLY+=("latest")
 fi
@@ -58,7 +58,7 @@ fi
 if [[ ${#TAGS_TO_APPLY[@]} -gt 0 ]]; then
 	for component in gateway cluster; do
 		full_image="${REGISTRY}/${component}"
-		for tag in "${TAGS_TO_APPLY[@]}"; do
+		for tag in ${TAGS_TO_APPLY[@]+"${TAGS_TO_APPLY[@]}"}; do
 			[[ "${tag}" == "${IMAGE_TAG}" ]] && continue
 			echo "Tagging ${full_image}:${tag}..."
 			if [[ "${CONTAINER_RUNTIME}" == "podman" ]]; then
