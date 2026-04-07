@@ -1,0 +1,55 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+# Sandbox policy for Google Cloud Vertex AI
+#
+# This policy allows sandboxes to access Google Cloud endpoints required for
+# Vertex AI with Anthropic Claude models.
+
+version: 1
+
+network_policies:
+  google_vertex:
+    name: google-vertex
+    endpoints:
+      # Google OAuth endpoints for authentication
+      - host: oauth2.googleapis.com
+        port: 443
+      - host: accounts.google.com
+        port: 443
+      - host: www.googleapis.com
+        port: 443
+
+      # Vertex AI endpoints (global and regional)
+      - host: aiplatform.googleapis.com
+        port: 443
+      - host: us-east5-aiplatform.googleapis.com
+        port: 443
+      - host: us-central1-aiplatform.googleapis.com
+        port: 443
+      - host: us-west1-aiplatform.googleapis.com
+        port: 443
+      - host: europe-west1-aiplatform.googleapis.com
+        port: 443
+      - host: europe-west4-aiplatform.googleapis.com
+        port: 443
+      - host: asia-northeast1-aiplatform.googleapis.com
+        port: 443
+
+    binaries:
+      # Claude CLI for direct Vertex AI usage
+      - path: /usr/local/bin/claude
+      # Python for Anthropic SDK usage
+      - path: /usr/bin/python3
+      # curl for testing
+      - path: /usr/bin/curl
+
+  inference_local:
+    name: inference-local
+    endpoints:
+      # Local inference routing endpoint
+      - host: inference.local
+        port: 80
+    binaries:
+      - path: /usr/bin/curl
+      - path: /usr/bin/python3
