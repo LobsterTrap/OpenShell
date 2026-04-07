@@ -101,7 +101,7 @@ fi
 
 if [[ "${need_create}" == "1" ]]; then
 	echo "Creating sandbox '${SANDBOX_NAME}'..."
-	openshell sandbox create --name "${SANDBOX_NAME}" "${PROVIDER_ARGS[@]}" --tty -- "${CMD[@]}"
+	openshell sandbox create --name "${SANDBOX_NAME}" "${PROVIDER_ARGS[@]}" --auto-providers --tty -- "${CMD[@]}"
 else
 	echo "Connecting to existing sandbox '${SANDBOX_NAME}'..."
 	openshell sandbox connect "${SANDBOX_NAME}"
