@@ -44,15 +44,16 @@ impl ProviderPlugin for VertexProvider {
             // (requires --upload ~/.config/gcloud/:.config/gcloud/ when creating sandbox).
 
             // Warn if ADC doesn't exist on host
-            let adc_exists = if let Ok(custom_path) = std::env::var("GOOGLE_APPLICATION_CREDENTIALS") {
-                std::path::Path::new(&custom_path).exists()
-            } else {
-                let default_path = format!(
-                    "{}/.config/gcloud/application_default_credentials.json",
-                    std::env::var("HOME").unwrap_or_default()
-                );
-                std::path::Path::new(&default_path).exists()
-            };
+            let adc_exists =
+                if let Ok(custom_path) = std::env::var("GOOGLE_APPLICATION_CREDENTIALS") {
+                    std::path::Path::new(&custom_path).exists()
+                } else {
+                    let default_path = format!(
+                        "{}/.config/gcloud/application_default_credentials.json",
+                        std::env::var("HOME").unwrap_or_default()
+                    );
+                    std::path::Path::new(&default_path).exists()
+                };
 
             if !adc_exists {
                 eprintln!();
