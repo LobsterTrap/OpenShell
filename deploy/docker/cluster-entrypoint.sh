@@ -60,8 +60,8 @@ fi
 # Select iptables backend (Docker only)
 # ---------------------------------------------------------------------------
 # Under Podman with nftables kube-proxy mode, the iptables backend probe is
-# unnecessary — kube-proxy uses nft directly. Flannel still uses the iptables
-# binary but through the nft compat shim which doesn't need the xt probe.
+# unnecessary — kube-proxy uses nft directly and flannel's iptables calls are
+# redirected to the nft backend via update-alternatives (see below).
 #
 # Under Docker (or unset runtime), probe whether xt_comment is usable. Some
 # kernels (e.g. Jetson Linux 5.15-tegra) have nf_tables but lack the
@@ -672,18 +672,21 @@ if [ -n "${OPENSHELL_NODE_NAME:-}" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# Select kube-proxy mode
+# Select kube-proxy mode and iptables backend
 # ---------------------------------------------------------------------------
 # Under Podman, use native nftables kube-proxy mode so no legacy iptables
 # kernel modules are needed for kube-proxy service routing.
 #
 # Flannel's embedded traffic manager in k3s v1.35.x still uses the iptables
-# binary (no nft backend compiled in).  The iptables binary inside the
-# container is iptables-legacy, which requires the iptable_nat, iptable_filter,
-# and ip_tables kernel modules.  Modern distributions (Fedora 43+, RHEL 10+)
-# no longer load these modules by default.  The RPM %post scriptlet both
-# loads the modules immediately and installs a modules-load.d config for
-# persistence across reboots.  The warning below covers non-RPM installs.
+# binary for masquerade rules.  By default, the container's iptables
+# alternative points to iptables-legacy, which requires the iptable_nat and
+# iptable_filter kernel modules.  Modern distributions (Fedora 43+, RHEL 10+)
+# ship only nf_tables and no longer load these legacy modules.
+#
+# The fix: register the k3s-bundled xtables-nft-multi as a higher-priority
+# iptables alternative so flannel uses the nf_tables kernel path instead of
+# the legacy iptable_nat path.  This eliminates the dependency on legacy
+# iptables kernel modules entirely.
 #
 # Docker retains the default iptables kube-proxy mode for maximum compatibility.
 EXTRA_KUBE_PROXY_ARGS=""
@@ -691,17 +694,23 @@ if [ "${CONTAINER_RUNTIME:-}" = "podman" ]; then
 	echo "Podman detected — using nftables kube-proxy mode"
 	EXTRA_KUBE_PROXY_ARGS="--kube-proxy-arg=proxy-mode=nftables"
 
-	# Verify legacy iptables kernel modules are loaded on the host.
-	# Flannel's traffic manager calls iptables-legacy for masquerade rules,
-	# which requires iptable_nat and related modules.  The RPM loads these
-	# at install time and persists them via modules-load.d, but they may be
-	# absent on non-RPM installs or manually configured systems.
-	if ! cat /proc/modules 2>/dev/null | grep -q '^iptable_nat '; then
-		echo "Warning: iptable_nat kernel module is not loaded on the host." >&2
-		echo "         Flannel masquerade rules will fail without it." >&2
-		echo "         Load it now with: sudo modprobe iptable_nat" >&2
-		echo "         To persist across reboots:" >&2
-		echo "           echo iptable_nat | sudo tee /etc/modules-load.d/openshell-flannel.conf" >&2
+	# Switch the iptables alternative to the nft backend so flannel's
+	# masquerade rules use the nf_tables kernel module instead of requiring
+	# legacy iptable_nat/iptable_filter modules.  The k3s image bundles
+	# xtables-nft-multi at /usr/bin/aux/; registering it at priority 20
+	# (above iptables-legacy's priority 10) makes it the auto-selected
+	# default.
+	if [ -x /usr/bin/aux/xtables-nft-multi ]; then
+		update-alternatives --install \
+			/usr/sbin/iptables iptables /usr/bin/aux/xtables-nft-multi 20 \
+			--follower /usr/sbin/ip6tables ip6tables /usr/bin/aux/xtables-nft-multi \
+			--follower /usr/sbin/iptables-save iptables-save /usr/bin/aux/xtables-nft-multi \
+			--follower /usr/sbin/iptables-restore iptables-restore /usr/bin/aux/xtables-nft-multi \
+			--follower /usr/sbin/ip6tables-save ip6tables-save /usr/bin/aux/xtables-nft-multi \
+			--follower /usr/sbin/ip6tables-restore ip6tables-restore /usr/bin/aux/xtables-nft-multi \
+			>/dev/null 2>&1 && \
+			echo "Switched iptables to nft backend for flannel compatibility" || \
+			echo "Warning: could not register iptables-nft alternative — flannel may fail on nftables-only hosts" >&2
 	fi
 fi
 
