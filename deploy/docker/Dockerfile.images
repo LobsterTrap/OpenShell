@@ -230,7 +230,7 @@ FROM quay.io/hummingbird/core-runtime:latest-builder AS cluster
 USER root
 
 RUN dnf install -y fedora-repos && \
-    dnf install -y \
+    dnf install -y --no-best --skip-broken \
     ca-certificates \
     iptables \
     util-linux \
