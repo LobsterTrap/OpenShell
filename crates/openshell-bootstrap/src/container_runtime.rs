@@ -228,7 +228,7 @@ fn current_uid() -> Option<u32> {
 }
 
 /// Check whether a binary is on PATH.
-fn has_binary(name: &str) -> bool {
+pub(crate) fn has_binary(name: &str) -> bool {
     std::process::Command::new(name)
         .arg("--version")
         .stdout(std::process::Stdio::null())
