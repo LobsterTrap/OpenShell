@@ -181,15 +181,22 @@ pub async fn sync_policy(endpoint: &str, sandbox: &str, policy: &ProtoSandboxPol
     sync_policy_with_client(&mut client, sandbox, policy).await
 }
 
+/// Result of fetching provider environment.
+pub struct ProviderEnvironmentResult {
+    /// Credential environment variables (key → secret value).
+    pub environment: HashMap<String, String>,
+    /// Seconds until next refresh. 0 = static credentials only.
+    pub refresh_after_secs: u32,
+}
+
 /// Fetch provider environment variables for a sandbox from OpenShell server via gRPC.
 ///
-/// Returns a map of environment variable names to values derived from provider
-/// credentials configured on the sandbox. Returns an empty map if the sandbox
-/// has no providers or the call fails.
+/// Returns credential env vars and a refresh interval. A `refresh_after_secs`
+/// of 0 means all credentials are static and no polling is needed.
 pub async fn fetch_provider_environment(
     endpoint: &str,
     sandbox_id: &str,
-) -> Result<HashMap<String, String>> {
+) -> Result<ProviderEnvironmentResult> {
     debug!(endpoint = %endpoint, sandbox_id = %sandbox_id, "Fetching provider environment");
 
     let mut client = connect(endpoint).await?;
@@ -201,7 +208,11 @@ pub async fn fetch_provider_environment(
         .await
         .into_diagnostic()?;
 
-    Ok(response.into_inner().environment)
+    let inner = response.into_inner();
+    Ok(ProviderEnvironmentResult {
+        environment: inner.environment,
+        refresh_after_secs: inner.refresh_after_secs,
+    })
 }
 
 /// A reusable gRPC client for the OpenShell service.
@@ -221,7 +232,7 @@ pub struct SettingsPollResult {
     pub config_revision: u64,
     pub policy_source: PolicySource,
     /// Effective settings keyed by name.
-    pub settings: std::collections::HashMap<String, openshell_core::proto::EffectiveSetting>,
+    pub settings: HashMap<String, openshell_core::proto::EffectiveSetting>,
     /// When `policy_source` is `Global`, the version of the global policy revision.
     pub global_policy_version: u32,
 }
@@ -261,6 +272,27 @@ impl CachedOpenShellClient {
                 .unwrap_or(PolicySource::Unspecified),
             settings: inner.settings,
             global_policy_version: inner.global_policy_version,
+        })
+    }
+
+    /// Fetch provider environment for credential refresh polling.
+    pub async fn fetch_provider_environment(
+        &self,
+        sandbox_id: &str,
+    ) -> Result<ProviderEnvironmentResult> {
+        let response = self
+            .client
+            .clone()
+            .get_sandbox_provider_environment(GetSandboxProviderEnvironmentRequest {
+                sandbox_id: sandbox_id.to_string(),
+            })
+            .await
+            .into_diagnostic()?;
+
+        let inner = response.into_inner();
+        Ok(ProviderEnvironmentResult {
+            environment: inner.environment,
+            refresh_after_secs: inner.refresh_after_secs,
         })
     }
 

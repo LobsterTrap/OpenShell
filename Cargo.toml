@@ -75,6 +75,9 @@ tokio-tungstenite = { version = "0.26", features = ["rustls-tls-native-roots"] }
 # Clipboard (OSC 52)
 base64 = "0.22"
 
+# Concurrent data structures
+dashmap = "6"
+
 # Utilities
 futures = "0.3"
 bytes = "1"

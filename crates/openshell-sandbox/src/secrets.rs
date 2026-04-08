@@ -4,6 +4,7 @@
 use base64::Engine as _;
 use std::collections::HashMap;
 use std::fmt;
+use std::sync::RwLock;
 
 const PLACEHOLDER_PREFIX: &str = "openshell:resolve:env:";
 
@@ -61,9 +62,23 @@ pub(crate) struct RewriteTargetResult {
 // SecretResolver
 // ---------------------------------------------------------------------------
 
-#[derive(Debug, Clone, Default)]
+/// Resolves `openshell:resolve:env:*` placeholder strings to real secret values.
+///
+/// This type intentionally does **not** implement `Clone` because the inner
+/// `RwLock<HashMap>` requires atomic access for credential refresh. All call
+/// sites wrap the resolver in `Arc<SecretResolver>` for shared ownership.
+#[derive(Default)]
 pub struct SecretResolver {
-    by_placeholder: HashMap<String, String>,
+    by_placeholder: RwLock<HashMap<String, String>>,
+}
+
+impl fmt::Debug for SecretResolver {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let count = self.by_placeholder.read().map(|m| m.len()).unwrap_or(0);
+        f.debug_struct("SecretResolver")
+            .field("placeholder_count", &count)
+            .finish()
+    }
 }
 
 impl SecretResolver {
@@ -83,17 +98,41 @@ impl SecretResolver {
             by_placeholder.insert(placeholder, value);
         }
 
-        (child_env, Some(Self { by_placeholder }))
+        (
+            child_env,
+            Some(Self {
+                by_placeholder: RwLock::new(by_placeholder),
+            }),
+        )
+    }
+
+    /// Atomically replace all secret mappings with new values.
+    ///
+    /// Used by the credential poll loop to swap in fresh OAuth2 access tokens.
+    /// Takes env-key-keyed input (e.g. `{"GITHUB_TOKEN": "new-val"}`) and
+    /// converts to placeholder-keyed internally.
+    pub(crate) fn replace_secrets(&self, new_provider_env: HashMap<String, String>) {
+        let mut new_map = HashMap::with_capacity(new_provider_env.len());
+        for (key, value) in new_provider_env {
+            let placeholder = placeholder_for_env_key(&key);
+            new_map.insert(placeholder, value);
+        }
+        let mut guard = self.by_placeholder.write().expect("secret resolver lock");
+        *guard = new_map;
     }
 
     /// Resolve a placeholder string to the real secret value.
     ///
     /// Returns `None` if the placeholder is unknown or the resolved value
     /// contains prohibited control characters (CRLF, null byte).
-    pub(crate) fn resolve_placeholder(&self, value: &str) -> Option<&str> {
-        let secret = self.by_placeholder.get(value).map(String::as_str)?;
+    ///
+    /// Returns an owned `String` because the value is cloned under a read
+    /// lock — callers must not hold a borrow across the lock boundary.
+    pub(crate) fn resolve_placeholder(&self, value: &str) -> Option<String> {
+        let guard = self.by_placeholder.read().expect("secret resolver lock");
+        let secret = guard.get(value)?;
         match validate_resolved_secret(secret) {
-            Ok(s) => Some(s),
+            Ok(s) => Some(s.to_string()),
             Err(reason) => {
                 tracing::warn!(
                     location = "resolve_placeholder",
@@ -108,7 +147,7 @@ impl SecretResolver {
     pub(crate) fn rewrite_header_value(&self, value: &str) -> Option<String> {
         // Direct placeholder match: `x-api-key: openshell:resolve:env:KEY`
         if let Some(secret) = self.resolve_placeholder(value.trim()) {
-            return Some(secret.to_string());
+            return Some(secret);
         }
 
         let trimmed = value.trim();
@@ -147,20 +186,29 @@ impl SecretResolver {
             return None;
         }
 
-        // Rewrite all placeholder occurrences in the decoded string
+        // Rewrite all placeholder occurrences in the decoded string.
+        // Collect replacements under a single read-lock acquisition to
+        // avoid holding the lock across the string rewriting loop.
+        let replacements: Vec<(String, String)> = {
+            let guard = self.by_placeholder.read().expect("secret resolver lock");
+            guard
+                .iter()
+                .filter(|(ph, _)| decoded.contains(ph.as_str()))
+                .map(|(ph, sec)| (ph.clone(), sec.clone()))
+                .collect()
+        };
+
         let mut rewritten = decoded.to_string();
-        for (placeholder, secret) in &self.by_placeholder {
-            if rewritten.contains(placeholder.as_str()) {
-                // Validate the resolved secret for control characters
-                if validate_resolved_secret(secret).is_err() {
-                    tracing::warn!(
-                        location = "basic_auth",
-                        "credential resolution rejected: resolved value contains prohibited characters"
-                    );
-                    return None;
-                }
-                rewritten = rewritten.replace(placeholder.as_str(), secret);
+        for (placeholder, secret) in &replacements {
+            // Validate the resolved secret for control characters
+            if validate_resolved_secret(secret).is_err() {
+                tracing::warn!(
+                    location = "basic_auth",
+                    "credential resolution rejected: resolved value contains prohibited characters"
+                );
+                return None;
             }
+            rewritten = rewritten.replace(placeholder.as_str(), secret);
         }
 
         // Only return if we actually changed something
@@ -479,7 +527,7 @@ fn rewrite_path_segment(
 
             let full_placeholder = &segment[abs_start..key_end];
             if let Some(secret) = resolver.resolve_placeholder(full_placeholder) {
-                validate_credential_for_path(secret).map_err(|reason| {
+                validate_credential_for_path(&secret).map_err(|reason| {
                     tracing::warn!(
                         location = "path",
                         %reason,
@@ -487,7 +535,7 @@ fn rewrite_path_segment(
                     );
                     UnresolvedPlaceholderError { location: "path" }
                 })?;
-                resolved.push_str(secret);
+                resolved.push_str(&secret);
                 redacted.push_str("[CREDENTIAL]");
             } else {
                 return Err(UnresolvedPlaceholderError { location: "path" });
@@ -523,7 +571,7 @@ fn rewrite_uri_query_params(
         if let Some((key, value)) = param.split_once('=') {
             let decoded_value = percent_decode(value);
             if let Some(secret) = resolver.resolve_placeholder(&decoded_value) {
-                resolved_params.push(format!("{key}={}", percent_encode_query(secret)));
+                resolved_params.push(format!("{key}={}", percent_encode_query(&secret)));
                 redacted_params.push(format!("{key}=[CREDENTIAL]"));
                 any_rewritten = true;
             } else if decoded_value.contains(PLACEHOLDER_PREFIX) {
@@ -717,7 +765,7 @@ mod tests {
                 .as_ref()
                 .and_then(|resolver| resolver
                     .resolve_placeholder("openshell:resolve:env:ANTHROPIC_API_KEY")),
-            Some("sk-test")
+            Some("sk-test".to_string())
         );
     }
 
@@ -890,7 +938,7 @@ mod tests {
         let resolver = resolver.expect("resolver");
         assert_eq!(
             resolver.resolve_placeholder("openshell:resolve:env:KEY"),
-            Some("sk-abc123_DEF.456~xyz")
+            Some("sk-abc123_DEF.456~xyz".to_string())
         );
     }
 
@@ -1472,5 +1520,125 @@ mod tests {
 
         assert_eq!(result.resolved, "/bottok123/method?key=key456");
         assert_eq!(result.redacted, "/bot[CREDENTIAL]/method?key=[CREDENTIAL]");
+    }
+
+    // === RwLock and replace_secrets tests ===
+
+    #[test]
+    fn replace_secrets_updates_resolved_values() {
+        let (_, resolver) = SecretResolver::from_provider_env(
+            [("API_KEY".to_string(), "old-secret".to_string())]
+                .into_iter()
+                .collect(),
+        );
+        let resolver = resolver.expect("resolver");
+
+        assert_eq!(
+            resolver.resolve_placeholder("openshell:resolve:env:API_KEY"),
+            Some("old-secret".to_string())
+        );
+
+        // Replace with new value.
+        resolver.replace_secrets(
+            [("API_KEY".to_string(), "new-secret".to_string())]
+                .into_iter()
+                .collect(),
+        );
+
+        assert_eq!(
+            resolver.resolve_placeholder("openshell:resolve:env:API_KEY"),
+            Some("new-secret".to_string())
+        );
+    }
+
+    #[test]
+    fn replace_secrets_removes_stale_keys() {
+        let (_, resolver) = SecretResolver::from_provider_env(
+            [
+                ("KEY_A".to_string(), "val-a".to_string()),
+                ("KEY_B".to_string(), "val-b".to_string()),
+            ]
+            .into_iter()
+            .collect(),
+        );
+        let resolver = resolver.expect("resolver");
+
+        // Replace with only KEY_A — KEY_B should disappear.
+        resolver.replace_secrets(
+            [("KEY_A".to_string(), "val-a-new".to_string())]
+                .into_iter()
+                .collect(),
+        );
+
+        assert_eq!(
+            resolver.resolve_placeholder("openshell:resolve:env:KEY_A"),
+            Some("val-a-new".to_string())
+        );
+        assert_eq!(
+            resolver.resolve_placeholder("openshell:resolve:env:KEY_B"),
+            None
+        );
+    }
+
+    #[test]
+    fn replace_secrets_adds_new_keys() {
+        let (_, resolver) = SecretResolver::from_provider_env(
+            [("EXISTING".to_string(), "val".to_string())]
+                .into_iter()
+                .collect(),
+        );
+        let resolver = resolver.expect("resolver");
+
+        resolver.replace_secrets(
+            [
+                ("EXISTING".to_string(), "val".to_string()),
+                ("NEW_KEY".to_string(), "new-val".to_string()),
+            ]
+            .into_iter()
+            .collect(),
+        );
+
+        assert_eq!(
+            resolver.resolve_placeholder("openshell:resolve:env:NEW_KEY"),
+            Some("new-val".to_string())
+        );
+    }
+
+    #[test]
+    fn concurrent_read_during_replace_does_not_panic() {
+        use std::sync::Arc;
+
+        let (_, resolver) = SecretResolver::from_provider_env(
+            [("TOKEN".to_string(), "initial".to_string())]
+                .into_iter()
+                .collect(),
+        );
+        let resolver = Arc::new(resolver.expect("resolver"));
+
+        // Spawn readers and one writer concurrently.
+        let mut handles = Vec::new();
+        for _ in 0..8 {
+            let r = resolver.clone();
+            handles.push(std::thread::spawn(move || {
+                for _ in 0..100 {
+                    let _ = r.resolve_placeholder("openshell:resolve:env:TOKEN");
+                }
+            }));
+        }
+
+        let w = resolver.clone();
+        handles.push(std::thread::spawn(move || {
+            for i in 0..100 {
+                w.replace_secrets(
+                    [("TOKEN".to_string(), format!("val-{i}"))]
+                        .into_iter()
+                        .collect(),
+                );
+            }
+        }));
+
+        for h in handles {
+            h.join().expect("thread should not panic");
+        }
     }
 }

@@ -20,6 +20,7 @@ mod sandbox_index;
 mod sandbox_watch;
 mod ssh_tunnel;
 mod tls;
+pub mod token_vending;
 pub mod tracing_bus;
 mod ws_tunnel;
 
@@ -38,6 +39,7 @@ use sandbox::{SandboxClient, spawn_sandbox_watcher, spawn_store_reconciler};
 use sandbox_index::SandboxIndex;
 use sandbox_watch::{SandboxWatchBus, spawn_kube_event_tailer};
 pub use tls::TlsAcceptor;
+use token_vending::TokenVendingService;
 use tracing_bus::TracingLogBus;
 
 /// Server state shared across handlers.
@@ -72,6 +74,9 @@ pub struct ServerState {
     /// set/delete operation, including the precedence check on sandbox
     /// mutations that reads global state.
     pub settings_mutex: tokio::sync::Mutex<()>,
+
+    /// Token vending service for `OAuth2` providers.
+    pub token_vending: TokenVendingService,
 }
 
 fn is_benign_tls_handshake_failure(error: &std::io::Error) -> bool {
@@ -102,6 +107,7 @@ impl ServerState {
             ssh_connections_by_token: Mutex::new(HashMap::new()),
             ssh_connections_by_sandbox: Mutex::new(HashMap::new()),
             settings_mutex: tokio::sync::Mutex::new(()),
+            token_vending: TokenVendingService::new(),
         }
     }
 }

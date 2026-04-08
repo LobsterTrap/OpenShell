@@ -374,6 +374,145 @@ The gateway enforces:
 
 Providers are stored with `object_type = "provider"` in the shared object store.
 
+## OAuth2 Credential Lifecycle
+
+### Overview
+
+Providers can use OAuth2 for credential lifecycle management instead of static tokens.
+The gateway server performs all OAuth2 operations (token exchange, refresh, rotation
+persistence). The sandbox supervisor polls for fresh access tokens on a server-dictated
+interval, atomically updating the `SecretResolver`. Sandboxes with only static credentials
+incur zero overhead — no poll loop is spawned.
+
+The core invariant is preserved: real credentials (access tokens, refresh tokens, client
+secrets) never enter the sandbox runtime. Child processes see only stable placeholder
+strings.
+
+### Configuration
+
+OAuth2 is an auth method, not a provider type. Any provider type (`github`, `gitlab`,
+`generic`, etc.) can use OAuth2 by setting config keys:
+
+| Config Key | Required | Example | Purpose |
+|---|---|---|---|
+| `auth_method` | Yes | `oauth2` | Discriminator (absence means static) |
+| `oauth_token_endpoint` | Yes | `https://github.com/login/oauth/access_token` | Token exchange URL (HTTPS only) |
+| `oauth_grant_type` | Yes | `refresh_token` or `client_credentials` | OAuth2 flow type |
+| `oauth_scopes` | No | `api read_user` | Space-separated scopes |
+| `oauth_access_token_env` | No | `MY_TOKEN` | Override output env var name |
+
+OAuth2 secret material is stored in `Provider.credentials`:
+
+| Credential Key | Required For | Purpose |
+|---|---|---|
+| `OAUTH_CLIENT_ID` | All OAuth2 | Client identifier |
+| `OAUTH_CLIENT_SECRET` | All OAuth2 | Client secret |
+| `OAUTH_REFRESH_TOKEN` | `refresh_token` grant | Refresh token (may be rotated) |
+
+### CLI Usage
+
+```bash
+# Refresh token flow:
+openshell provider create \
+  --name github-oauth --type github \
+  --credential OAUTH_CLIENT_ID=Iv1.abc123 \
+  --credential OAUTH_CLIENT_SECRET=secret456 \
+  --credential OAUTH_REFRESH_TOKEN=ghr_xyz789 \
+  --config auth_method=oauth2 \
+  --config oauth_grant_type=refresh_token \
+  --config oauth_token_endpoint=https://github.com/login/oauth/access_token
+
+# Client credentials flow:
+openshell provider create \
+  --name service-account --type generic \
+  --credential OAUTH_CLIENT_ID=client-id \
+  --credential OAUTH_CLIENT_SECRET=client-secret \
+  --config auth_method=oauth2 \
+  --config oauth_grant_type=client_credentials \
+  --config oauth_token_endpoint=https://auth.example.com/oauth2/token
+```
+
+### Gateway-Side Token Vending
+
+The `TokenVendingService` (`crates/openshell-server/src/token_vending.rs`) handles all
+OAuth2 token exchange, caching, and refresh:
+
+- **Per-provider caching**: access tokens are cached in memory with their TTL.
+- **Lazy refresh**: tokens are refreshed when a sandbox calls
+  `GetSandboxProviderEnvironment` and the cached token is within its safety margin
+  (`max(60s, ttl * 0.1)` before expiry).
+- **Concurrent deduplication**: a per-provider `tokio::sync::Mutex` ensures only one
+  HTTP request to the IdP runs at a time; concurrent callers await the result.
+- **Refresh token rotation**: if the IdP returns a new refresh token, the gateway
+  persists it to the store via `UpdateProvider`.
+
+The `resolve_provider_environment()` function detects OAuth2 providers via
+`config["auth_method"] == "oauth2"`, calls the token vending service, and returns
+the access token as a credential entry (e.g., `GITHUB_ACCESS_TOKEN`). OAuth2 internal
+credentials (`OAUTH_CLIENT_ID`, `OAUTH_CLIENT_SECRET`, `OAUTH_REFRESH_TOKEN`) are
+filtered out and never injected into the sandbox environment.
+
+### Response-Driven Polling
+
+`GetSandboxProviderEnvironmentResponse` includes a `refresh_after_secs` field:
+
+- **0**: all credentials are static — supervisor does not spawn a poll loop.
+- **>0**: computed as `min(token_ttl / 2)` across all OAuth2 providers. The supervisor
+  spawns a background credential poll loop.
+
+### Supervisor Credential Poll Loop
+
+When `refresh_after_secs > 0`, the sandbox supervisor spawns
+`run_credential_poll_loop()` (modeled on `run_policy_poll_loop()`):
+
+1. Sleeps for the server-dictated interval.
+2. Calls `GetSandboxProviderEnvironment` via `CachedOpenShellClient`.
+3. Atomically replaces all `SecretResolver` mappings via `replace_secrets()`.
+4. On failure, tightens the retry interval to 30 seconds.
+5. On recovery, restores the server-dictated interval.
+6. If the server returns `refresh_after_secs == 0`, exits cleanly.
+
+The `SecretResolver` uses `std::sync::RwLock<HashMap>` to allow atomic value replacement
+without blocking concurrent reads (credential resolution during request forwarding).
+
+### Credential Isolation
+
+| Secret | Gateway | Supervisor | Child Env | Proxy Wire |
+|---|---|---|---|---|
+| `OAUTH_CLIENT_ID` | ✅ Store + cache | ❌ | ❌ | ❌ |
+| `OAUTH_CLIENT_SECRET` | ✅ Store + cache | ❌ | ❌ | ❌ |
+| `OAUTH_REFRESH_TOKEN` | ✅ Store + cache | ❌ | ❌ | ❌ |
+| Access token (ephemeral) | ✅ Cache | ✅ SecretResolver | ❌ Placeholder | ✅ Egress |
+
+### End-to-End Flow (OAuth2)
+
+```
+CLI: openshell provider create --type github --config auth_method=oauth2 ...
+  |
+  +-- Gateway validates OAuth2 config (HTTPS endpoint, required credentials)
+  +-- Persists Provider with credentials + config
+  |
+CLI: openshell sandbox create --provider github-oauth -- claude
+  |
+  +-- Gateway: create_sandbox() validates provider exists
+  |
+  Sandbox supervisor: run_sandbox()
+    +-- GetSandboxProviderEnvironment
+    |     +-- Gateway: resolve_provider_environment()
+    |     |     +-- Detects auth_method=oauth2
+    |     |     +-- TokenVendingService::get_or_refresh()
+    |     |     |     +-- POST to oauth_token_endpoint (lazy refresh)
+    |     |     |     +-- Caches access_token with TTL
+    |     |     +-- Returns {GITHUB_ACCESS_TOKEN: "gho-abc123...", refresh_after_secs: 1800}
+    |     |     +-- Filters out OAUTH_CLIENT_ID, OAUTH_CLIENT_SECRET, OAUTH_REFRESH_TOKEN
+    +-- SecretResolver::from_provider_env()
+    |     +-- child env: {GITHUB_ACCESS_TOKEN: "openshell:resolve:env:GITHUB_ACCESS_TOKEN"}
+    |     +-- resolver: {"openshell:resolve:env:GITHUB_ACCESS_TOKEN": "gho-abc123..."}
+    +-- Spawns credential poll loop (refresh_after_secs=1800 → poll every 30min)
+    |     +-- Every 30min: GetSandboxProviderEnvironment → replace_secrets()
+    +-- Proxy rewrites outbound headers with current access token
+```
+
 ## Security Notes
 
 - Provider credentials are stored in `credentials` map and treated as sensitive.
@@ -385,6 +524,11 @@ Providers are stored with `object_type = "provider"` in the shared object store.
   placeholders, and the supervisor resolves those placeholders during outbound proxying.
 - `OPENSHELL_SSH_HANDSHAKE_SECRET` is required by the supervisor/SSH server path but is
   explicitly kept out of spawned sandbox child-process environments.
+- OAuth2 long-lived secrets (client ID, client secret, refresh token) never leave the
+  gateway process. Only short-lived access tokens are sent to the supervisor.
+- OAuth2 token endpoints must use HTTPS (enforced at provider creation).
+- Token endpoint responses are validated: access token values pass through
+  `validate_resolved_secret()` to reject header-injection characters.
 
 ## Test Strategy
 
@@ -396,3 +540,7 @@ Providers are stored with `object_type = "provider"` in the shared object store.
 - sandbox unit tests validate placeholder generation and header rewriting.
 - E2E sandbox tests verify placeholders are visible in child env, outbound proxy traffic
   is rewritten with the real secret, and the SSH handshake secret is absent from exec env.
+- OAuth2 token vending unit tests in `crates/openshell-server/src/token_vending.rs`:
+  mock HTTP server tests for token exchange, caching, rotation, and error handling.
+- `SecretResolver` concurrency tests validate `replace_secrets()` under concurrent
+  read/write access.

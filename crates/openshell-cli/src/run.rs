@@ -3450,11 +3450,27 @@ pub async fn provider_get(server: &str, name: &str, tls: &TlsOptions) -> Result<
     let credential_keys = provider.credentials.keys().cloned().collect::<Vec<_>>();
     let config_keys = provider.config.keys().cloned().collect::<Vec<_>>();
 
+    // Derive auth method display.
+    let auth_display = if provider
+        .config
+        .get("auth_method")
+        .is_some_and(|v| v == "oauth2")
+    {
+        let grant = provider
+            .config
+            .get("oauth_grant_type")
+            .map_or("unknown", |v| v.as_str());
+        format!("OAuth2 ({grant})")
+    } else {
+        "Static".to_string()
+    };
+
     println!("{}", "Provider:".cyan().bold());
     println!();
     println!("  {} {}", "Id:".dimmed(), provider.id);
     println!("  {} {}", "Name:".dimmed(), provider.name);
     println!("  {} {}", "Type:".dimmed(), provider.r#type);
+    println!("  {} {}", "Auth:".dimmed(), auth_display);
     println!(
         "  {} {}",
         "Credential keys:".dimmed(),

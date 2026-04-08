@@ -187,22 +187,27 @@ pub async fn run_sandbox(
     // Fetch provider environment variables from the server.
     // This is done after loading the policy so the sandbox can still start
     // even if provider env fetch fails (graceful degradation).
-    let provider_env = if let (Some(id), Some(endpoint)) = (&sandbox_id, &openshell_endpoint) {
-        match grpc_client::fetch_provider_environment(endpoint, id).await {
-            Ok(env) => {
-                info!(env_count = env.len(), "Fetched provider environment");
-                env
+    let (provider_env_map, refresh_after_secs) =
+        if let (Some(id), Some(endpoint)) = (&sandbox_id, &openshell_endpoint) {
+            match grpc_client::fetch_provider_environment(endpoint, id).await {
+                Ok(result) => {
+                    info!(
+                        env_count = result.environment.len(),
+                        refresh_after_secs = result.refresh_after_secs,
+                        "Fetched provider environment"
+                    );
+                    (result.environment, result.refresh_after_secs)
+                }
+                Err(e) => {
+                    warn!(error = %e, "Failed to fetch provider environment, continuing without");
+                    (std::collections::HashMap::new(), 0)
+                }
             }
-            Err(e) => {
-                warn!(error = %e, "Failed to fetch provider environment, continuing without");
-                std::collections::HashMap::new()
-            }
-        }
-    } else {
-        std::collections::HashMap::new()
-    };
+        } else {
+            (std::collections::HashMap::new(), 0)
+        };
 
-    let (provider_env, secret_resolver) = SecretResolver::from_provider_env(provider_env);
+    let (provider_env, secret_resolver) = SecretResolver::from_provider_env(provider_env_map);
     let secret_resolver = secret_resolver.map(Arc::new);
 
     // Create identity cache for SHA256 TOFU when OPA is active
@@ -588,6 +593,30 @@ pub async fn run_sandbox(
                 warn!(error = %e, "Policy poll loop exited with error");
             }
         });
+
+        // Spawn credential poll loop (only if credentials are time-bounded).
+        if refresh_after_secs > 0 {
+            if let Some(ref resolver) = secret_resolver {
+                let cred_id = id.clone();
+                let cred_endpoint = endpoint.clone();
+                let cred_resolver = resolver.clone();
+
+                tokio::spawn(async move {
+                    if let Err(e) = run_credential_poll_loop(
+                        &cred_endpoint,
+                        &cred_id,
+                        &cred_resolver,
+                        refresh_after_secs,
+                    )
+                    .await
+                    {
+                        warn!(error = %e, "Credential poll loop exited with error");
+                    }
+                });
+            }
+        } else {
+            debug!("All provider credentials are static, skipping credential poll loop");
+        }
 
         // Spawn denial aggregator (gRPC mode only, when proxy is active).
         if let Some(rx) = denial_rx {
@@ -1637,6 +1666,76 @@ async fn run_policy_poll_loop(
 }
 
 /// Log individual setting changes between two snapshots.
+/// Minimum poll interval for credential refresh (floor).
+const CREDENTIAL_MIN_POLL_INTERVAL_SECS: u64 = 30;
+/// Retry interval when credential refresh fails.
+const CREDENTIAL_FAILURE_RETRY_SECS: u64 = 30;
+
+/// Background loop that periodically re-fetches provider credentials from the
+/// gateway. Modeled on [`run_policy_poll_loop`] but focused on credential
+/// lifecycle.
+///
+/// The loop exits cleanly when the gateway returns `refresh_after_secs == 0`,
+/// indicating all credentials have become static (e.g. provider reconfigured).
+async fn run_credential_poll_loop(
+    endpoint: &str,
+    sandbox_id: &str,
+    secret_resolver: &Arc<SecretResolver>,
+    initial_refresh_secs: u32,
+) -> Result<()> {
+    use crate::grpc_client::CachedOpenShellClient;
+
+    let client = CachedOpenShellClient::connect(endpoint).await?;
+    let mut current_interval =
+        Duration::from_secs((initial_refresh_secs as u64).max(CREDENTIAL_MIN_POLL_INTERVAL_SECS));
+    let mut consecutive_failures: u32 = 0;
+
+    loop {
+        tokio::time::sleep(current_interval).await;
+
+        match client.fetch_provider_environment(sandbox_id).await {
+            Ok(result) => {
+                if consecutive_failures > 0 {
+                    info!(
+                        consecutive_failures,
+                        "Credential refresh recovered after failures"
+                    );
+                }
+                consecutive_failures = 0;
+
+                // Atomically replace the secret values.
+                secret_resolver.replace_secrets(result.environment);
+
+                // Use server-dictated interval for next poll.
+                let server_interval =
+                    u64::from(result.refresh_after_secs).max(CREDENTIAL_MIN_POLL_INTERVAL_SECS);
+                current_interval = Duration::from_secs(server_interval);
+
+                debug!(
+                    refresh_after_secs = result.refresh_after_secs,
+                    "Credential refresh completed"
+                );
+
+                // If server says 0, credentials became static. Exit loop.
+                if result.refresh_after_secs == 0 {
+                    info!("All credentials now static, stopping credential poll loop");
+                    return Ok(());
+                }
+            }
+            Err(e) => {
+                consecutive_failures += 1;
+                current_interval = Duration::from_secs(CREDENTIAL_FAILURE_RETRY_SECS);
+                warn!(
+                    error = %e,
+                    consecutive_failures,
+                    retry_in_secs = CREDENTIAL_FAILURE_RETRY_SECS,
+                    "Credential refresh failed, retrying at reduced interval"
+                );
+            }
+        }
+    }
+}
+
 fn log_setting_changes(
     old: &std::collections::HashMap<String, openshell_core::proto::EffectiveSetting>,
     new: &std::collections::HashMap<String, openshell_core::proto::EffectiveSetting>,

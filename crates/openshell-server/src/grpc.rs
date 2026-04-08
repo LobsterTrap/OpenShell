@@ -929,18 +929,24 @@ impl OpenShell for OpenShellService {
             .spec
             .ok_or_else(|| Status::internal("sandbox has no spec"))?;
 
-        let environment =
-            resolve_provider_environment(self.state.store.as_ref(), &spec.providers).await?;
+        let resolved = resolve_provider_environment(
+            self.state.store.as_ref(),
+            &self.state.token_vending,
+            &spec.providers,
+        )
+        .await?;
 
         info!(
             sandbox_id = %sandbox_id,
             provider_count = spec.providers.len(),
-            env_count = environment.len(),
+            env_count = resolved.environment.len(),
+            refresh_after_secs = resolved.refresh_after_secs,
             "GetSandboxProviderEnvironment request completed successfully"
         );
 
         Ok(Response::new(GetSandboxProviderEnvironmentResponse {
-            environment,
+            environment: resolved.environment,
+            refresh_after_secs: resolved.refresh_after_secs,
         }))
     }
 
@@ -3634,21 +3640,39 @@ fn build_remote_exec_command(req: &ExecSandboxRequest) -> Result<String, String>
     Ok(result)
 }
 
+/// Resolved provider environment with optional refresh interval.
+#[derive(Debug)]
+struct ResolvedProviderEnv {
+    environment: std::collections::HashMap<String, String>,
+    /// Seconds until the supervisor should re-fetch. 0 = static only.
+    refresh_after_secs: u32,
+}
+
 /// Resolve provider credentials into environment variables.
 ///
 /// For each provider name in the list, fetches the provider from the store and
 /// collects credential key-value pairs. Returns a map of environment variables
 /// to inject into the sandbox. When duplicate keys appear across providers, the
 /// first provider's value wins.
+///
+/// For OAuth2 providers, performs token exchange/refresh via the
+/// `TokenVendingService` and returns the access token as a regular credential
+/// entry. OAuth2 internal credentials (`OAUTH_CLIENT_ID`, `OAUTH_CLIENT_SECRET`,
+/// `OAUTH_REFRESH_TOKEN`) are filtered and never injected into the sandbox.
 async fn resolve_provider_environment(
     store: &crate::persistence::Store,
+    token_vending: &crate::token_vending::TokenVendingService,
     provider_names: &[String],
-) -> Result<std::collections::HashMap<String, String>, Status> {
+) -> Result<ResolvedProviderEnv, Status> {
     if provider_names.is_empty() {
-        return Ok(std::collections::HashMap::new());
+        return Ok(ResolvedProviderEnv {
+            environment: std::collections::HashMap::new(),
+            refresh_after_secs: 0,
+        });
     }
 
     let mut env = std::collections::HashMap::new();
+    let mut min_refresh_secs: Option<u32> = None;
 
     for name in provider_names {
         let provider = store
@@ -3657,7 +3681,60 @@ async fn resolve_provider_environment(
             .map_err(|e| Status::internal(format!("failed to fetch provider '{name}': {e}")))?
             .ok_or_else(|| Status::failed_precondition(format!("provider '{name}' not found")))?;
 
+        let is_oauth2 = crate::token_vending::is_oauth2_provider(&provider);
+
+        // Handle OAuth2 token resolution.
+        if is_oauth2 {
+            match token_vending.get_or_refresh(&provider).await {
+                Ok(result) => {
+                    let token_key = crate::token_vending::oauth_access_token_key(&provider);
+                    env.entry(token_key).or_insert(result.access_token);
+
+                    // If the IdP returned a rotated refresh token, persist it.
+                    // We construct a Provider with empty `id` and `config`
+                    // because `update_provider_record` resolves by `name` (not
+                    // id) and `merge_map` treats empty maps as no-ops, so only
+                    // the credentials map is merged into the existing record.
+                    if let Some(new_refresh) = result.new_refresh_token {
+                        let mut updated_creds = std::collections::HashMap::new();
+                        updated_creds.insert("OAUTH_REFRESH_TOKEN".to_string(), new_refresh);
+                        let updated = Provider {
+                            id: String::new(),
+                            name: provider.name.clone(),
+                            r#type: provider.r#type.clone(),
+                            credentials: updated_creds,
+                            config: std::collections::HashMap::new(),
+                        };
+                        if let Err(e) = update_provider_record(store, updated).await {
+                            warn!(
+                                provider_name = %name,
+                                error = %e.message(),
+                                "failed to persist rotated refresh token"
+                            );
+                        }
+                    }
+
+                    // Track shortest TTL for poll interval. Floor at 1 so
+                    // that very short-lived tokens (expires_in <= 1) don't
+                    // produce 0, which the supervisor interprets as "static".
+                    let refresh = (result.expires_in_secs / 2).max(1);
+                    min_refresh_secs = Some(min_refresh_secs.map_or(refresh, |m| m.min(refresh)));
+                }
+                Err(e) => {
+                    return Err(Status::internal(format!(
+                        "OAuth2 token refresh failed for provider '{name}': {e}"
+                    )));
+                }
+            }
+        }
+
+        // Inject static credentials; skip OAuth2 internal keys only for
+        // OAuth2 providers so that a static provider using a credential key
+        // like "OAUTH_CLIENT_ID" is not accidentally suppressed.
         for (key, value) in &provider.credentials {
+            if is_oauth2 && crate::token_vending::is_oauth2_internal_credential(key) {
+                continue;
+            }
             if is_valid_env_key(key) {
                 env.entry(key.clone()).or_insert_with(|| value.clone());
             } else {
@@ -3670,7 +3747,10 @@ async fn resolve_provider_environment(
         }
     }
 
-    Ok(env)
+    Ok(ResolvedProviderEnv {
+        environment: env,
+        refresh_after_secs: min_refresh_secs.unwrap_or(0),
+    })
 }
 
 fn is_valid_env_key(key: &str) -> bool {
@@ -4157,6 +4237,9 @@ async fn create_provider_record(
     // Validate field sizes before any I/O.
     validate_provider_fields(&provider)?;
 
+    // Validate OAuth2-specific configuration if present.
+    crate::token_vending::validate_oauth2_config(&provider)?;
+
     let existing = store
         .get_message_by_name::<Provider>(&provider.name)
         .await
@@ -4269,6 +4352,10 @@ async fn update_provider_record(
     };
 
     validate_provider_fields(&updated)?;
+
+    // Validate OAuth2-specific configuration on the merged result, so a
+    // user cannot add auth_method=oauth2 without the required credentials.
+    crate::token_vending::validate_oauth2_config(&updated)?;
 
     store
         .put_message(&updated)
@@ -4872,8 +4959,11 @@ mod tests {
     #[tokio::test]
     async fn resolve_provider_env_empty_list_returns_empty() {
         let store = Store::connect("sqlite::memory:").await.unwrap();
-        let result = resolve_provider_environment(&store, &[]).await.unwrap();
-        assert!(result.is_empty());
+        let token_vending = crate::token_vending::TokenVendingService::new();
+        let result = resolve_provider_environment(&store, &token_vending, &[])
+            .await
+            .unwrap();
+        assert!(result.environment.is_empty());
     }
 
     #[tokio::test]
@@ -4897,21 +4987,31 @@ mod tests {
         };
         create_provider_record(&store, provider).await.unwrap();
 
-        let result = resolve_provider_environment(&store, &["claude-local".to_string()])
-            .await
-            .unwrap();
-        assert_eq!(result.get("ANTHROPIC_API_KEY"), Some(&"sk-abc".to_string()));
-        assert_eq!(result.get("CLAUDE_API_KEY"), Some(&"sk-abc".to_string()));
+        let token_vending = crate::token_vending::TokenVendingService::new();
+        let result =
+            resolve_provider_environment(&store, &token_vending, &["claude-local".to_string()])
+                .await
+                .unwrap();
+        assert_eq!(
+            result.environment.get("ANTHROPIC_API_KEY"),
+            Some(&"sk-abc".to_string())
+        );
+        assert_eq!(
+            result.environment.get("CLAUDE_API_KEY"),
+            Some(&"sk-abc".to_string())
+        );
         // Config values should NOT be injected.
-        assert!(!result.contains_key("endpoint"));
+        assert!(!result.environment.contains_key("endpoint"));
     }
 
     #[tokio::test]
     async fn resolve_provider_env_unknown_name_returns_error() {
         let store = Store::connect("sqlite::memory:").await.unwrap();
-        let err = resolve_provider_environment(&store, &["nonexistent".to_string()])
-            .await
-            .unwrap_err();
+        let token_vending = crate::token_vending::TokenVendingService::new();
+        let err =
+            resolve_provider_environment(&store, &token_vending, &["nonexistent".to_string()])
+                .await
+                .unwrap_err();
         assert_eq!(err.code(), Code::FailedPrecondition);
         assert!(err.message().contains("nonexistent"));
     }
@@ -4934,12 +5034,17 @@ mod tests {
         };
         create_provider_record(&store, provider).await.unwrap();
 
-        let result = resolve_provider_environment(&store, &["test-provider".to_string()])
-            .await
-            .unwrap();
-        assert_eq!(result.get("VALID_KEY"), Some(&"value".to_string()));
-        assert!(!result.contains_key("nested.api_key"));
-        assert!(!result.contains_key("bad-key"));
+        let token_vending = crate::token_vending::TokenVendingService::new();
+        let result =
+            resolve_provider_environment(&store, &token_vending, &["test-provider".to_string()])
+                .await
+                .unwrap();
+        assert_eq!(
+            result.environment.get("VALID_KEY"),
+            Some(&"value".to_string())
+        );
+        assert!(!result.environment.contains_key("nested.api_key"));
+        assert!(!result.environment.contains_key("bad-key"));
     }
 
     #[tokio::test]
@@ -4975,14 +5080,22 @@ mod tests {
         .await
         .unwrap();
 
+        let token_vending = crate::token_vending::TokenVendingService::new();
         let result = resolve_provider_environment(
             &store,
+            &token_vending,
             &["claude-local".to_string(), "gitlab-local".to_string()],
         )
         .await
         .unwrap();
-        assert_eq!(result.get("ANTHROPIC_API_KEY"), Some(&"sk-abc".to_string()));
-        assert_eq!(result.get("GITLAB_TOKEN"), Some(&"glpat-xyz".to_string()));
+        assert_eq!(
+            result.environment.get("ANTHROPIC_API_KEY"),
+            Some(&"sk-abc".to_string())
+        );
+        assert_eq!(
+            result.environment.get("GITLAB_TOKEN"),
+            Some(&"glpat-xyz".to_string())
+        );
     }
 
     #[tokio::test]
@@ -5018,13 +5131,18 @@ mod tests {
         .await
         .unwrap();
 
+        let token_vending = crate::token_vending::TokenVendingService::new();
         let result = resolve_provider_environment(
             &store,
+            &token_vending,
             &["provider-a".to_string(), "provider-b".to_string()],
         )
         .await
         .unwrap();
-        assert_eq!(result.get("SHARED_KEY"), Some(&"first-value".to_string()));
+        assert_eq!(
+            result.environment.get("SHARED_KEY"),
+            Some(&"first-value".to_string())
+        );
     }
 
     /// Simulates the handler flow: persist a sandbox with providers, then resolve
@@ -5075,11 +5193,15 @@ mod tests {
             .unwrap()
             .unwrap();
         let spec = loaded.spec.unwrap();
-        let env = resolve_provider_environment(&store, &spec.providers)
+        let token_vending = crate::token_vending::TokenVendingService::new();
+        let env = resolve_provider_environment(&store, &token_vending, &spec.providers)
             .await
             .unwrap();
 
-        assert_eq!(env.get("ANTHROPIC_API_KEY"), Some(&"sk-test".to_string()));
+        assert_eq!(
+            env.environment.get("ANTHROPIC_API_KEY"),
+            Some(&"sk-test".to_string())
+        );
     }
 
     /// Handler flow returns empty map when sandbox has no providers.
@@ -5106,11 +5228,12 @@ mod tests {
             .unwrap()
             .unwrap();
         let spec = loaded.spec.unwrap();
-        let env = resolve_provider_environment(&store, &spec.providers)
+        let token_vending = crate::token_vending::TokenVendingService::new();
+        let env = resolve_provider_environment(&store, &token_vending, &spec.providers)
             .await
             .unwrap();
 
-        assert!(env.is_empty());
+        assert!(env.environment.is_empty());
     }
 
     /// Handler returns not-found when sandbox doesn't exist.

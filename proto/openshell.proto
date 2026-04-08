@@ -433,6 +433,11 @@ message GetSandboxProviderEnvironmentRequest {
 message GetSandboxProviderEnvironmentResponse {
   // Provider credential environment variables.
   map<string, string> environment = 1;
+  // Seconds until the supervisor should re-fetch credentials.
+  // 0 means all credentials are static — do not poll.
+  // The server computes this as min(ttl * 0.5) across all
+  // time-bounded credentials attached to the sandbox.
+  uint32 refresh_after_secs = 2;
 }
 
 // ---------------------------------------------------------------------------
