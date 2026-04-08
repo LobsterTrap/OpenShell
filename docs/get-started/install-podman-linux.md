@@ -170,7 +170,9 @@ $ source ~/.bashrc
 ```
 
 :::{warning}
-Order matters. Login lingering must be enabled before setting `DBUS_SESSION_BUS_ADDRESS`. The bus socket at `$XDG_RUNTIME_DIR/bus` is only created when systemd starts the user session manager, which requires lingering. If you set the env var first without linger, you will get "No such file or directory" because the socket does not exist yet.
+`DBUS_SESSION_BUS_ADDRESS` references `$XDG_RUNTIME_DIR` in its value. You must set `XDG_RUNTIME_DIR` first. If you run `export DBUS_SESSION_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/bus` when `XDG_RUNTIME_DIR` is empty, the path expands to `unix:path=/bus`, which is invalid. Always source both exports together (e.g., `source ~/.bashrc`), or set `XDG_RUNTIME_DIR` on its own line before `DBUS_SESSION_BUS_ADDRESS`.
+
+Login lingering must also be enabled before these variables are useful. The bus socket at `$XDG_RUNTIME_DIR/bus` is only created when systemd starts the user session manager, which requires lingering.
 :::
 
 ### Enable the Podman Socket
@@ -369,7 +371,7 @@ After enabling the socket, retry `openshell gateway start`.
 
 ### systemctl --user fails with "not defined" or "No such file or directory"
 
-`systemctl --user` can fail with two related errors depending on what is missing:
+`systemctl --user` can fail with two related errors:
 
 **Error: variables not defined**
 
@@ -377,7 +379,7 @@ After enabling the socket, retry `openshell gateway start`.
 Failed to connect to user scope bus via local transport: $DBUS_SESSION_BUS_ADDRESS and $XDG_RUNTIME_DIR not defined
 ```
 
-This means the environment variables are not set. This happens when you switch users with `su -` or `sudo su`, or when your SSH server does not run PAM session modules.
+Neither environment variable is set. This happens when you switch users with `su -` or `sudo su`, or when your SSH server does not run PAM session modules.
 
 **Error: No such file or directory**
 
@@ -385,31 +387,46 @@ This means the environment variables are not set. This happens when you switch u
 Failed to connect to user scope bus via local transport: No such file or directory
 ```
 
-This means the variables are set but the D-Bus bus socket at `$XDG_RUNTIME_DIR/bus` does not exist. This happens when login lingering is not enabled — systemd has not started a user session manager for your account, so the bus socket was never created.
+The variables are set but the D-Bus bus socket they point to does not exist. There are two common causes:
+
+- **`XDG_RUNTIME_DIR` was empty when `DBUS_SESSION_BUS_ADDRESS` was set.** Because the `DBUS_SESSION_BUS_ADDRESS` export references `$XDG_RUNTIME_DIR`, running `export DBUS_SESSION_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/bus` when `XDG_RUNTIME_DIR` is empty produces `unix:path=/bus`, which does not exist. Check the current value:
+
+  ```console
+  $ echo $DBUS_SESSION_BUS_ADDRESS
+  ```
+
+  If it shows `unix:path=/bus` (missing the `/run/user/<uid>` prefix), this is the problem.
+
+- **Login lingering is not enabled.** Without lingering, systemd does not start a user session manager, so the bus socket at `/run/user/<uid>/bus` is never created.
 
 **Fix for both errors:**
 
-The steps must be done in this order:
+Run these three steps in order. Each step depends on the one before it:
 
-1. Enable login lingering (this starts the systemd user session manager, which creates the bus socket):
+1. Enable login lingering. This starts the systemd user session manager, which creates the bus socket:
 
    ```console
    $ sudo loginctl enable-linger $USER
    ```
 
-2. Set the environment variables in your shell profile (`~/.bashrc` or equivalent):
-
-   ```bash
-   export XDG_RUNTIME_DIR=/run/user/$(id -u)
-   export DBUS_SESSION_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/bus
-   ```
-
-3. Reload and retry:
+2. Set `XDG_RUNTIME_DIR` **first**, then `DBUS_SESSION_BUS_ADDRESS`. The second variable references the first, so the order matters:
 
    ```console
-   $ source ~/.bashrc
+   $ export XDG_RUNTIME_DIR=/run/user/$(id -u)
+   $ export DBUS_SESSION_BUS_ADDRESS=unix:path=$XDG_RUNTIME_DIR/bus
+   ```
+
+   To make this permanent, add both lines (in this order) to `~/.bashrc` or equivalent.
+
+3. Verify and retry:
+
+   ```console
+   $ echo $DBUS_SESSION_BUS_ADDRESS
+   unix:path=/run/user/1000/bus
    $ systemctl --user enable --now podman.socket
    ```
+
+   The `echo` output should show the full path including `/run/user/<uid>`. If it shows `unix:path=/bus`, go back to step 2.
 
 :::{tip}
 If you SSH directly as the target user (rather than `su` from root), most distributions set these variables automatically via PAM. If you still see this error after a direct SSH login, check that `UsePAM yes` is set in `/etc/ssh/sshd_config`.
