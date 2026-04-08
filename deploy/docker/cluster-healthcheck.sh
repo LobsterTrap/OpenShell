@@ -75,8 +75,18 @@ kubectl -n openshell get secret openshell-ssh-handshake >/dev/null 2>&1 || exit 
 # ---------------------------------------------------------------------------
 # Verify the gateway NodePort (30051) is actually accepting TCP connections.
 # After a container restart, kube-proxy may need extra time to re-program
-# iptables rules for NodePort routing.  Without this check the health check
-# can pass before the port is routable, causing "Connection refused" on the
-# host-mapped port.
+# iptables/nftables rules for NodePort routing.  Without this check the
+# health check can pass before the port is routable, causing "Connection
+# refused" on the host-mapped port.
+#
+# When kube-proxy runs in nftables mode (Podman), NodePort DNAT rules only
+# match traffic destined to the node's real IP addresses — loopback
+# (127.0.0.1) is not in the nodeport-ips set.  Use the node's InternalIP
+# so the check works with both iptables and nftables kube-proxy modes.
 # ---------------------------------------------------------------------------
-timeout 2 bash -c 'echo >/dev/tcp/127.0.0.1/30051' 2>/dev/null || exit 1
+NODEPORT_CHECK_IP="127.0.0.1"
+NODE_IP=$(kubectl get nodes -o jsonpath='{.items[0].status.addresses[?(@.type=="InternalIP")].address}' 2>/dev/null || true)
+if [ -n "$NODE_IP" ]; then
+    NODEPORT_CHECK_IP="$NODE_IP"
+fi
+timeout 2 bash -c "echo >/dev/tcp/${NODEPORT_CHECK_IP}/30051" 2>/dev/null || exit 1

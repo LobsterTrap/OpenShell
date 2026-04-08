@@ -675,12 +675,34 @@ fi
 # Select kube-proxy mode
 # ---------------------------------------------------------------------------
 # Under Podman, use native nftables kube-proxy mode so no legacy iptables
-# kernel modules (ip_tables, iptable_nat, etc.) are required on the host.
-# Docker retains the default iptables mode for maximum compatibility.
+# kernel modules are needed for kube-proxy service routing.
+#
+# Flannel's embedded traffic manager in k3s v1.35.x still uses the iptables
+# binary (no nft backend compiled in).  The iptables binary inside the
+# container is iptables-legacy, which requires the iptable_nat, iptable_filter,
+# and ip_tables kernel modules.  Modern distributions (Fedora 43+, RHEL 10+)
+# no longer load these modules by default.  The RPM %post scriptlet both
+# loads the modules immediately and installs a modules-load.d config for
+# persistence across reboots.  The warning below covers non-RPM installs.
+#
+# Docker retains the default iptables kube-proxy mode for maximum compatibility.
 EXTRA_KUBE_PROXY_ARGS=""
 if [ "${CONTAINER_RUNTIME:-}" = "podman" ]; then
 	echo "Podman detected — using nftables kube-proxy mode"
 	EXTRA_KUBE_PROXY_ARGS="--kube-proxy-arg=proxy-mode=nftables"
+
+	# Verify legacy iptables kernel modules are loaded on the host.
+	# Flannel's traffic manager calls iptables-legacy for masquerade rules,
+	# which requires iptable_nat and related modules.  The RPM loads these
+	# at install time and persists them via modules-load.d, but they may be
+	# absent on non-RPM installs or manually configured systems.
+	if ! cat /proc/modules 2>/dev/null | grep -q '^iptable_nat '; then
+		echo "Warning: iptable_nat kernel module is not loaded on the host." >&2
+		echo "         Flannel masquerade rules will fail without it." >&2
+		echo "         Load it now with: sudo modprobe iptable_nat" >&2
+		echo "         To persist across reboots:" >&2
+		echo "           echo iptable_nat | sudo tee /etc/modules-load.d/openshell-flannel.conf" >&2
+	fi
 fi
 
 # Execute k3s with explicit resolv-conf passed as a kubelet arg.
