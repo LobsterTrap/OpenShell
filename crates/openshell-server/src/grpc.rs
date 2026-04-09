@@ -930,7 +930,8 @@ impl OpenShell for OpenShellService {
             .ok_or_else(|| Status::internal("sandbox has no spec"))?;
 
         let (environment, metadata) =
-            resolve_provider_environment(self.state.clone(), &spec.providers, spec.policy.as_ref()).await?;
+            resolve_provider_environment(self.state.clone(), &spec.providers, spec.policy.as_ref())
+                .await?;
 
         info!(
             sandbox_id = %sandbox_id,
@@ -3610,10 +3611,7 @@ async fn resolve_provider_environment(
     use openshell_core::proto::OAuthCredentialMetadata;
 
     if provider_names.is_empty() {
-        return Ok((
-            HashMap::new(),
-            HashMap::new(),
-        ));
+        return Ok((HashMap::new(), HashMap::new()));
     }
 
     // Extract OAuth settings from policy (use defaults if not specified)
@@ -4316,10 +4314,7 @@ fn redact_provider_credentials(mut provider: Provider) -> Provider {
     provider
 }
 
-async fn create_provider_record(
-    store: &Store,
-    mut provider: Provider,
-) -> Result<Provider, Status> {
+async fn create_provider_record(store: &Store, mut provider: Provider) -> Result<Provider, Status> {
     if provider.name.is_empty() {
         provider.name = generate_name();
     }
@@ -4354,10 +4349,7 @@ async fn create_provider_record(
     Ok(redact_provider_credentials(provider))
 }
 
-async fn get_provider_record(
-    store: &Store,
-    name: &str,
-) -> Result<Provider, Status> {
+async fn get_provider_record(store: &Store, name: &str) -> Result<Provider, Status> {
     if name.is_empty() {
         return Err(Status::invalid_argument("name is required"));
     }
@@ -4412,10 +4404,7 @@ fn merge_map(
     existing
 }
 
-async fn update_provider_record(
-    store: &Store,
-    provider: Provider,
-) -> Result<Provider, Status> {
+async fn update_provider_record(store: &Store, provider: Provider) -> Result<Provider, Status> {
     if provider.name.is_empty() {
         return Err(Status::invalid_argument("provider.name is required"));
     }
@@ -4456,10 +4445,7 @@ async fn update_provider_record(
     Ok(redact_provider_credentials(updated))
 }
 
-async fn delete_provider_record(
-    store: &Store,
-    name: &str,
-) -> Result<bool, Status> {
+async fn delete_provider_record(store: &Store, name: &str) -> Result<bool, Status> {
     if name.is_empty() {
         return Err(Status::invalid_argument("name is required"));
     }
@@ -5089,7 +5075,9 @@ mod tests {
     async fn resolve_provider_env_empty_list_returns_empty() {
         let store = Store::connect("sqlite::memory:").await.unwrap();
         let state = create_test_state(store).await;
-        let (env, metadata) = resolve_provider_environment(state, &[], None).await.unwrap();
+        let (env, metadata) = resolve_provider_environment(state, &[], None)
+            .await
+            .unwrap();
         assert!(env.is_empty());
         assert!(metadata.is_empty());
     }
@@ -5116,9 +5104,10 @@ mod tests {
         create_provider_record(&store, provider).await.unwrap();
         let state = create_test_state(store).await;
 
-        let (env, _metadata) = resolve_provider_environment(state, &["claude-local".to_string()], None)
-            .await
-            .unwrap();
+        let (env, _metadata) =
+            resolve_provider_environment(state, &["claude-local".to_string()], None)
+                .await
+                .unwrap();
         assert_eq!(env.get("ANTHROPIC_API_KEY"), Some(&"sk-abc".to_string()));
         assert_eq!(env.get("CLAUDE_API_KEY"), Some(&"sk-abc".to_string()));
         // Config values are injected as environment variables
@@ -5158,9 +5147,10 @@ mod tests {
         create_provider_record(&store, provider).await.unwrap();
         let state = create_test_state(store).await;
 
-        let (env, _metadata) = resolve_provider_environment(state, &["test-provider".to_string()], None)
-            .await
-            .unwrap();
+        let (env, _metadata) =
+            resolve_provider_environment(state, &["test-provider".to_string()], None)
+                .await
+                .unwrap();
         assert_eq!(env.get("VALID_KEY"), Some(&"value".to_string()));
         assert!(!env.contains_key("nested.api_key"));
         assert!(!env.contains_key("bad-key"));

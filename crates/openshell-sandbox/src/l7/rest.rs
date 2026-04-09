@@ -263,14 +263,14 @@ fn get_oauth_access_token(
 ) -> Option<String> {
     // Try environment variable first
     if let Ok(token) = std::env::var(token_env_var) {
-        return Some(token.trim().to_string());  // Strip whitespace/newlines
+        return Some(token.trim().to_string()); // Strip whitespace/newlines
     }
 
     // Try resolver with placeholder
     if let Some(resolver) = resolver {
         let placeholder = format!("openshell:resolve:env:{}", token_env_var);
         if let Some(token) = resolver.resolve_placeholder(&placeholder) {
-            return Some(token.trim().to_string());  // Strip whitespace/newlines
+            return Some(token.trim().to_string()); // Strip whitespace/newlines
         }
     }
 
@@ -296,7 +296,8 @@ fn inject_oauth_header(
         "Injecting OAuth access token into Authorization header"
     );
 
-    let header_end = raw.windows(4)
+    let header_end = raw
+        .windows(4)
         .position(|w| w == b"\r\n\r\n")
         .map(|p| p + 4)
         .unwrap_or(raw.len());
@@ -357,9 +358,10 @@ where
     // Return fake success so Claude CLI proceeds to API requests
     if req.action == "POST" && req.target == "/token" {
         let header_str = String::from_utf8_lossy(&req.raw_header);
-        if let Some(host_line) = header_str.lines().find(|line| {
-            line.to_ascii_lowercase().starts_with("host:")
-        }) {
+        if let Some(host_line) = header_str
+            .lines()
+            .find(|line| line.to_ascii_lowercase().starts_with("host:"))
+        {
             let host = host_line.split_once(':').map_or("", |(_, h)| h.trim());
             if host.to_ascii_lowercase() == "oauth2.googleapis.com" {
                 info!("Intercepting OAuth token exchange, returning fake success");
@@ -371,7 +373,10 @@ where
                     response_body
                 );
 
-                client.write_all(response.as_bytes()).await.into_diagnostic()?;
+                client
+                    .write_all(response.as_bytes())
+                    .await
+                    .into_diagnostic()?;
                 client.flush().await.into_diagnostic()?;
                 return Ok(RelayOutcome::Consumed);
             }
@@ -1723,7 +1728,8 @@ mod tests {
                 &req,
                 &mut proxy_to_client,
                 &mut proxy_to_upstream,
-                None, None,
+                None,
+                None,
             ),
         )
         .await
@@ -1780,7 +1786,8 @@ mod tests {
                 &req,
                 &mut proxy_to_client,
                 &mut proxy_to_upstream,
-                None, None,
+                None,
+                None,
             ),
         )
         .await
@@ -1905,7 +1912,8 @@ mod tests {
                 &req,
                 &mut proxy_to_client,
                 &mut proxy_to_upstream,
-                resolver.as_ref(), None,
+                resolver.as_ref(),
+                None,
             ),
         )
         .await
@@ -1989,7 +1997,8 @@ mod tests {
                 &req,
                 &mut proxy_to_client,
                 &mut proxy_to_upstream,
-                None, None, // <-- No resolver, as in the L4 raw tunnel path
+                None,
+                None, // <-- No resolver, as in the L4 raw tunnel path
             ),
         )
         .await
@@ -2077,7 +2086,8 @@ mod tests {
                 &req,
                 &mut proxy_to_client,
                 &mut proxy_to_upstream,
-                resolver, None,
+                resolver,
+                None,
             ),
         )
         .await

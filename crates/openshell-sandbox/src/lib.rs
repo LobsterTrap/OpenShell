@@ -1506,9 +1506,7 @@ fn create_fake_vertex_adc(policy: &SandboxPolicy) -> Result<()> {
     fs::write(&adc_path, fake_adc).into_diagnostic()?;
 
     // Set file permissions to 600 (owner read/write only)
-    let mut perms = fs::metadata(&adc_path)
-        .into_diagnostic()?
-        .permissions();
+    let mut perms = fs::metadata(&adc_path).into_diagnostic()?.permissions();
     perms.set_mode(0o600);
     fs::set_permissions(&adc_path, perms).into_diagnostic()?;
 

@@ -1272,9 +1272,9 @@ network_policies:
     }
 }
 
-    #[test]
-    fn parse_oauth_injection_config() {
-        let yaml = r#"
+#[test]
+fn parse_oauth_injection_config() {
+    let yaml = r#"
 version: 1
 network_policies:
   test:
@@ -1289,18 +1289,21 @@ network_policies:
     binaries:
       - path: /usr/bin/curl
 "#;
-        let policy = parse_sandbox_policy(yaml).expect("parse failed");
-        let rule = policy.network_policies.get("test").expect("policy not found");
-        let endpoint = rule.endpoints.first().expect("no endpoints");
-        let oauth = endpoint.oauth.as_ref().expect("no oauth config");
-        
-        assert_eq!(oauth.token_env_var, "TEST_ACCESS_TOKEN");
-        assert_eq!(oauth.header_format, "Bearer {token}");
-    }
+    let policy = parse_sandbox_policy(yaml).expect("parse failed");
+    let rule = policy
+        .network_policies
+        .get("test")
+        .expect("policy not found");
+    let endpoint = rule.endpoints.first().expect("no endpoints");
+    let oauth = endpoint.oauth.as_ref().expect("no oauth config");
 
-    #[test]
-    fn round_trip_oauth_injection_config() {
-        let yaml = r#"
+    assert_eq!(oauth.token_env_var, "TEST_ACCESS_TOKEN");
+    assert_eq!(oauth.header_format, "Bearer {token}");
+}
+
+#[test]
+fn round_trip_oauth_injection_config() {
+    let yaml = r#"
 version: 1
 network_policies:
   test:
@@ -1315,36 +1318,53 @@ network_policies:
     binaries:
       - path: /usr/bin/curl
 "#;
-        let proto1 = parse_sandbox_policy(yaml).expect("parse failed");
-        let yaml_out = serialize_sandbox_policy(&proto1).expect("serialize failed");
-        let proto2 = parse_sandbox_policy(&yaml_out).expect("re-parse failed");
-        
-        let oauth1 = proto1.network_policies["test"].endpoints[0].oauth.as_ref().unwrap();
-        let oauth2 = proto2.network_policies["test"].endpoints[0].oauth.as_ref().unwrap();
-        
-        assert_eq!(oauth1.token_env_var, oauth2.token_env_var);
-        assert_eq!(oauth1.header_format, oauth2.header_format);
-    }
+    let proto1 = parse_sandbox_policy(yaml).expect("parse failed");
+    let yaml_out = serialize_sandbox_policy(&proto1).expect("serialize failed");
+    let proto2 = parse_sandbox_policy(&yaml_out).expect("re-parse failed");
 
-    #[test]
-    fn parse_vertex_example_policy() {
-        let yaml = std::fs::read_to_string("../../examples/vertex-ai/sandbox-policy.yaml")
-            .expect("failed to read example policy");
-        let policy = parse_sandbox_policy(&yaml).expect("parse failed");
-        
-        let rule = policy.network_policies.get("google_vertex").expect("google_vertex policy not found");
-        assert!(!rule.endpoints.is_empty(), "should have endpoints");
-        
-        // Check that aiplatform.googleapis.com endpoints have OAuth config
-        let vertex_endpoints: Vec<_> = rule.endpoints.iter()
-            .filter(|e| e.host.contains("aiplatform.googleapis.com"))
-            .collect();
-        
-        assert!(!vertex_endpoints.is_empty(), "should have aiplatform endpoints");
-        
-        for endpoint in vertex_endpoints {
-            let oauth = endpoint.oauth.as_ref().expect("aiplatform endpoint should have OAuth config");
-            assert_eq!(oauth.token_env_var, "VERTEX_ACCESS_TOKEN");
-            assert_eq!(oauth.header_format, "Bearer {token}");
-        }
+    let oauth1 = proto1.network_policies["test"].endpoints[0]
+        .oauth
+        .as_ref()
+        .unwrap();
+    let oauth2 = proto2.network_policies["test"].endpoints[0]
+        .oauth
+        .as_ref()
+        .unwrap();
+
+    assert_eq!(oauth1.token_env_var, oauth2.token_env_var);
+    assert_eq!(oauth1.header_format, oauth2.header_format);
+}
+
+#[test]
+fn parse_vertex_example_policy() {
+    let yaml = std::fs::read_to_string("../../examples/vertex-ai/sandbox-policy.yaml")
+        .expect("failed to read example policy");
+    let policy = parse_sandbox_policy(&yaml).expect("parse failed");
+
+    let rule = policy
+        .network_policies
+        .get("google_vertex")
+        .expect("google_vertex policy not found");
+    assert!(!rule.endpoints.is_empty(), "should have endpoints");
+
+    // Check that aiplatform.googleapis.com endpoints have OAuth config
+    let vertex_endpoints: Vec<_> = rule
+        .endpoints
+        .iter()
+        .filter(|e| e.host.contains("aiplatform.googleapis.com"))
+        .collect();
+
+    assert!(
+        !vertex_endpoints.is_empty(),
+        "should have aiplatform endpoints"
+    );
+
+    for endpoint in vertex_endpoints {
+        let oauth = endpoint
+            .oauth
+            .as_ref()
+            .expect("aiplatform endpoint should have OAuth config");
+        assert_eq!(oauth.token_env_var, "VERTEX_ACCESS_TOKEN");
+        assert_eq!(oauth.header_format, "Bearer {token}");
     }
+}
