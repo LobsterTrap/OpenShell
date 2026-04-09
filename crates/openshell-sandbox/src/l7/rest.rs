@@ -1735,10 +1735,15 @@ mod tests {
         .await
         .expect("relay must not deadlock");
 
-        let outcome = result.expect("relay should succeed");
+        // Unsolicited 101 upgrade should return an error
         assert!(
-            matches!(outcome, RelayOutcome::Consumed),
-            "unsolicited 101 should be rejected as Consumed, got {outcome:?}"
+            result.is_err(),
+            "unsolicited 101 should be rejected with an error"
+        );
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("unsolicited 101"),
+            "error message should mention unsolicited 101, got: {err_msg}"
         );
 
         upstream_task.await.expect("upstream task should complete");
