@@ -51,6 +51,7 @@ dev = [
     "maturin>=1.5,<2.0",
     "setuptools-scm>=8",
     "grpcio-tools>=1.60",
+    "pyelftools>=0.30",
 ]
 docs = [
     "sphinx<=7.5",

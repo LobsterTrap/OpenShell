@@ -2118,7 +2118,12 @@ pub async fn sandbox_create(
     // Track whether we have seen a non-Ready phase during the watch.
     let mut saw_non_ready = SandboxPhase::try_from(sandbox.phase) != Ok(SandboxPhase::Ready);
     let start_time = Instant::now();
-    let provision_timeout = Duration::from_secs(300);
+    let provision_timeout = Duration::from_secs(
+        std::env::var("OPENSHELL_PROVISION_TIMEOUT")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(300),
+    );
     // Track whether we saw the gateway become ready (from log messages).
     let mut saw_gateway_ready = false;
 

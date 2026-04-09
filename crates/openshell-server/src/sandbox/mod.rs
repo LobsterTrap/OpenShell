@@ -786,7 +786,11 @@ fn apply_supervisor_sideload(pod_template: &mut serde_json::Value) {
 /// The init container mounts the PVC at a temporary path so it can still see
 /// the image's `/sandbox` directory.  It checks for a sentinel file and skips
 /// the copy if the PVC was already initialised.
-fn apply_workspace_persistence(pod_template: &mut serde_json::Value, image: &str) {
+fn apply_workspace_persistence(
+    pod_template: &mut serde_json::Value,
+    image: &str,
+    image_pull_policy: &str,
+) {
     let Some(spec) = pod_template.get_mut("spec").and_then(|v| v.as_object_mut()) else {
         return;
     };
@@ -827,19 +831,24 @@ fn apply_workspace_persistence(pod_template: &mut serde_json::Value, image: &str
         // read the image's original /sandbox contents.  It copies them into
         // the PVC only when the sentinel file is absent.
         //
+        // Prefer a tar stream over `cp -a`: some sandbox images contain
+        // self-referential symlinks under `/sandbox/.uv`, and GNU cp can
+        // fail while seeding the PVC even though preserving the symlink as-is
+        // is valid. `tar` copies the tree without dereferencing those links.
+        //
         // The inner `[ -d ... ]` guard handles custom images that don't have
         // a /sandbox directory — the copy is skipped but the sentinel is
         // still written so subsequent starts are instant.
         let copy_cmd = format!(
             "if [ ! -f {WORKSPACE_INIT_MOUNT_PATH}/{WORKSPACE_SENTINEL} ]; then \
                if [ -d {WORKSPACE_MOUNT_PATH} ]; then \
-                 cp -a {WORKSPACE_MOUNT_PATH}/. {WORKSPACE_INIT_MOUNT_PATH}/; \
+                 tar -C {WORKSPACE_MOUNT_PATH} -cf - . | tar -C {WORKSPACE_INIT_MOUNT_PATH} -xpf -; \
                fi && \
                touch {WORKSPACE_INIT_MOUNT_PATH}/{WORKSPACE_SENTINEL}; \
              fi"
         );
 
-        init_containers.push(serde_json::json!({
+        let mut init_spec = serde_json::json!({
             "name": WORKSPACE_INIT_CONTAINER_NAME,
             "image": image,
             "command": ["sh", "-c", copy_cmd],
@@ -848,7 +857,11 @@ fn apply_workspace_persistence(pod_template: &mut serde_json::Value, image: &str
                 "name": WORKSPACE_VOLUME_NAME,
                 "mountPath": WORKSPACE_INIT_MOUNT_PATH
             }]
-        }));
+        });
+        if !image_pull_policy.is_empty() {
+            init_spec["imagePullPolicy"] = serde_json::json!(image_pull_policy);
+        }
+        init_containers.push(init_spec);
     }
 }
 
@@ -1126,7 +1139,7 @@ fn sandbox_template_to_k8s(
     // that /sandbox data survives pod rescheduling.  Skipped when the user
     // provides custom volumeClaimTemplates to avoid conflicts.
     if inject_workspace {
-        apply_workspace_persistence(&mut result, image);
+        apply_workspace_persistence(&mut result, image, image_pull_policy);
     }
 
     result
@@ -2024,7 +2037,11 @@ mod tests {
             }
         });
 
-        apply_workspace_persistence(&mut pod_template, "openshell/sandbox:latest");
+        apply_workspace_persistence(
+            &mut pod_template,
+            "openshell/sandbox:latest",
+            "IfNotPresent",
+        );
 
         // Init container
         let init_containers = pod_template["spec"]["initContainers"]
@@ -2033,6 +2050,7 @@ mod tests {
         assert_eq!(init_containers.len(), 1);
         assert_eq!(init_containers[0]["name"], WORKSPACE_INIT_CONTAINER_NAME);
         assert_eq!(init_containers[0]["image"], "openshell/sandbox:latest");
+        assert_eq!(init_containers[0]["imagePullPolicy"], "IfNotPresent");
         assert_eq!(init_containers[0]["securityContext"]["runAsUser"], 0);
 
         // Init container mounts PVC at temp path, not /sandbox
@@ -2078,7 +2096,7 @@ mod tests {
             }
         });
 
-        apply_workspace_persistence(&mut pod_template, "my-custom-image:v2");
+        apply_workspace_persistence(&mut pod_template, "my-custom-image:v2", "IfNotPresent");
 
         let init_image = pod_template["spec"]["initContainers"][0]["image"]
             .as_str()
@@ -2100,7 +2118,7 @@ mod tests {
             }
         });
 
-        apply_workspace_persistence(&mut pod_template, "img:latest");
+        apply_workspace_persistence(&mut pod_template, "img:latest", "Always");
 
         let cmd = pod_template["spec"]["initContainers"][0]["command"]
             .as_array()
@@ -2111,8 +2129,8 @@ mod tests {
             "init script must check for sentinel file"
         );
         assert!(
-            script.contains("cp -a"),
-            "init script must copy image contents"
+            script.contains("tar -C"),
+            "init script must seed image contents with a tar stream"
         );
     }
 

@@ -39,6 +39,7 @@ These pipelines connect skills into end-to-end workflows. Individual skill files
 | `crates/openshell-core/` | Shared core | Common types, configuration, error handling |
 | `crates/openshell-providers/` | Provider management | Credential provider backends |
 | `crates/openshell-tui/` | Terminal UI | Ratatui-based dashboard for monitoring |
+| `crates/openshell-vm/` | MicroVM runtime | Experimental, work-in-progress libkrun-based VM execution |
 | `python/openshell/` | Python SDK | Python bindings and CLI packaging |
 | `proto/` | Protobuf definitions | gRPC service contracts |
 | `deploy/` | Docker, Helm, K8s | Dockerfiles, Helm chart, manifests |

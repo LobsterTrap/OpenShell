@@ -461,9 +461,18 @@ if [ -n "${IMAGE_TAG:-}" ] && [ -f "$HELMCHART" ]; then
     sed -i -E "s|tag:[[:space:]]*\"?latest\"?|tag: \"${IMAGE_TAG}\"|" "$HELMCHART"
 fi
 
-if [ -n "${IMAGE_PULL_POLICY:-}" ] && [ -f "$HELMCHART" ]; then
-    echo "Overriding image pull policy to: ${IMAGE_PULL_POLICY}"
-    sed -i "s|pullPolicy: Always|pullPolicy: ${IMAGE_PULL_POLICY}|" "$HELMCHART"
+if [ -f "$HELMCHART" ]; then
+    IMAGE_PULL_POLICY_VALUE="${IMAGE_PULL_POLICY:-Always}"
+    if [ -n "${IMAGE_PULL_POLICY:-}" ]; then
+        echo "Overriding image pull policy to: ${IMAGE_PULL_POLICY}"
+    fi
+    sed -i "s|__IMAGE_PULL_POLICY__|${IMAGE_PULL_POLICY_VALUE}|g" "$HELMCHART"
+
+    SANDBOX_IMAGE_PULL_POLICY_VALUE="${SANDBOX_IMAGE_PULL_POLICY:-\"\"}"
+    sed -i "s|__SANDBOX_IMAGE_PULL_POLICY__|${SANDBOX_IMAGE_PULL_POLICY_VALUE}|g" "$HELMCHART"
+
+    DB_URL_VALUE="${DB_URL:-\"sqlite:/var/openshell/openshell.db\"}"
+    sed -i "s|__DB_URL__|${DB_URL_VALUE}|g" "$HELMCHART"
 fi
 
 # SSH handshake secret: previously generated here and injected via sed into the

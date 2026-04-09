@@ -25,7 +25,11 @@ fn extract_sandbox_name(output: &str) -> Option<String> {
 }
 
 /// Default timeout for waiting for a sandbox to become ready.
-const SANDBOX_READY_TIMEOUT: Duration = Duration::from_secs(300);
+/// In VM mode, the overlayfs snapshotter re-extracts all image layers
+/// from the content store on every boot (~250s for the 1GB sandbox
+/// base image), so 600s accommodates extraction + workspace-init + pod
+/// startup.
+const SANDBOX_READY_TIMEOUT: Duration = Duration::from_secs(600);
 
 /// RAII guard that deletes a sandbox on drop.
 ///

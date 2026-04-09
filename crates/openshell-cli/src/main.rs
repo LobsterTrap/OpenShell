@@ -62,9 +62,13 @@ fn resolve_gateway(
     gateway_endpoint: &Option<String>,
 ) -> Result<GatewayContext> {
     if let Some(endpoint) = gateway_endpoint {
+        // When a gateway name is explicitly provided (via flag or env var),
+        // trust it directly — don't require metadata to exist yet. This
+        // avoids a race condition where mTLS certs are stored under the
+        // real gateway name but the CLI falls back to using the raw
+        // endpoint URL (producing a mangled path like `https___...`).
         let name = gateway_flag
             .clone()
-            .filter(|name| get_gateway_metadata(name).is_some())
             .or_else(|| find_gateway_by_endpoint(endpoint))
             .unwrap_or_else(|| endpoint.clone());
         return Ok(GatewayContext {
