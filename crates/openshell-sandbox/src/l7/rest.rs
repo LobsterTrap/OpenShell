@@ -12,7 +12,7 @@ use crate::secrets::rewrite_http_header_block;
 use miette::{IntoDiagnostic, Result, miette};
 use std::collections::HashMap;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 const MAX_HEADER_BYTES: usize = 16384; // 16 KiB for HTTP headers
 const RELAY_BUF_SIZE: usize = 8192;
@@ -255,6 +255,102 @@ where
     relay_http_request_with_resolver(req, client, upstream, None).await
 }
 
+/// Check if the request is to a Vertex AI API endpoint
+fn is_vertex_api_request(header_str: &str) -> bool {
+    if let Some(host_line) = header_str.lines().find(|line| {
+        line.to_ascii_lowercase().starts_with("host:")
+    }) {
+        let host = host_line.split_once(':').map_or("", |(_, h)| h.trim());
+        // Strip port if present (e.g., "aiplatform.googleapis.com:443")
+        let host = host.split(':').next().unwrap_or(host);
+        let host_lower = host.to_ascii_lowercase();
+
+        // Match regional endpoints like us-east5-aiplatform.googleapis.com
+        // and global endpoint aiplatform.googleapis.com
+        host_lower.ends_with("-aiplatform.googleapis.com") ||
+            host_lower == "aiplatform.googleapis.com"
+    } else {
+        false
+    }
+}
+
+/// Get Vertex access token from environment or resolver
+fn get_vertex_access_token(resolver: Option<&crate::secrets::SecretResolver>) -> Option<String> {
+    // Try environment variable first
+    if let Ok(token) = std::env::var("VERTEX_ACCESS_TOKEN") {
+        return Some(token.trim().to_string());  // Strip whitespace/newlines
+    }
+
+    // Try resolver with placeholder
+    if let Some(resolver) = resolver {
+        if let Some(token) = resolver.resolve_placeholder("openshell:resolve:env:VERTEX_ACCESS_TOKEN") {
+            return Some(token.trim().to_string());  // Strip whitespace/newlines
+        }
+    }
+
+    None
+}
+
+/// Inject or replace Authorization header in HTTP request for Vertex AI
+fn inject_vertex_auth_header(
+    raw: &[u8],
+    resolver: Option<&crate::secrets::SecretResolver>,
+) -> Result<crate::secrets::RewriteResult, crate::secrets::UnresolvedPlaceholderError> {
+    use crate::secrets::{RewriteResult, rewrite_http_header_block};
+
+    // Get the access token
+    let Some(access_token) = get_vertex_access_token(resolver) else {
+        // No token available, fall back to standard rewriting
+        return rewrite_http_header_block(raw, resolver);
+    };
+
+    info!("Injecting Vertex AI access token into Authorization header");
+
+    let header_end = raw.windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .map(|p| p + 4)
+        .unwrap_or(raw.len());
+
+    let header_str = String::from_utf8_lossy(&raw[..header_end]);
+    let mut lines: Vec<&str> = header_str.split("\r\n").collect();
+
+    // Find and remove existing Authorization header
+    lines.retain(|line| !line.to_ascii_lowercase().starts_with("authorization:"));
+
+    let mut output = Vec::with_capacity(raw.len() + 100);
+
+    // Write request line
+    if let Some(request_line) = lines.first() {
+        output.extend_from_slice(request_line.as_bytes());
+        output.extend_from_slice(b"\r\n");
+    }
+
+    // Write Authorization header
+    let auth_header = format!("Authorization: Bearer {}", access_token);
+    output.extend_from_slice(auth_header.as_bytes());
+    output.extend_from_slice(b"\r\n");
+
+    // Write remaining headers (skip first line which is request line, skip empty lines at end)
+    for line in lines.iter().skip(1) {
+        if line.is_empty() {
+            break;
+        }
+        output.extend_from_slice(line.as_bytes());
+        output.extend_from_slice(b"\r\n");
+    }
+
+    // End headers
+    output.extend_from_slice(b"\r\n");
+
+    // Copy body
+    output.extend_from_slice(&raw[header_end..]);
+
+    Ok(RewriteResult {
+        rewritten: output,
+        redacted_target: None,
+    })
+}
+
 pub(crate) async fn relay_http_request_with_resolver<C, U>(
     req: &L7Request,
     client: &mut C,
@@ -265,15 +361,52 @@ where
     C: AsyncRead + AsyncWrite + Unpin,
     U: AsyncRead + AsyncWrite + Unpin,
 {
+    // Intercept OAuth token exchange for fake ADC credentials
+    // Return fake success so Claude CLI proceeds to API requests
+    if req.action == "POST" && req.target == "/token" {
+        let header_str = String::from_utf8_lossy(&req.raw_header);
+        if let Some(host_line) = header_str.lines().find(|line| {
+            line.to_ascii_lowercase().starts_with("host:")
+        }) {
+            let host = host_line.split_once(':').map_or("", |(_, h)| h.trim());
+            if host.to_ascii_lowercase() == "oauth2.googleapis.com" {
+                let host = host.split(':').next().unwrap_or(host);                                                                             
+                info!("Intercepting OAuth token exchange, returning fake success");
+
+                let response_body = r#"{"access_token":"fake-token-will-be-replaced-by-proxy","token_type":"Bearer","expires_in":3600}"#;
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                    response_body.len(),
+                    response_body
+                );
+
+                client.write_all(response.as_bytes()).await.into_diagnostic()?;
+                client.flush().await.into_diagnostic()?;
+                return Ok(RelayOutcome::Consumed);
+            }
+        }
+    }
     let header_end = req
         .raw_header
         .windows(4)
         .position(|w| w == b"\r\n\r\n")
         .map_or(req.raw_header.len(), |p| p + 4);
 
-    let rewrite_result = rewrite_http_header_block(&req.raw_header[..header_end], resolver)
-        .map_err(|e| miette!("credential injection failed: {e}"))?;
+    // Detect Vertex AI API requests and inject Authorization header
+    let header_str = String::from_utf8_lossy(&req.raw_header[..header_end]);
+    let is_vertex_request = is_vertex_api_request(&header_str);
 
+    let rewrite_result = if is_vertex_request {
+        // For Vertex AI requests, inject/replace Authorization header
+        inject_vertex_auth_header(&req.raw_header[..header_end], resolver)
+            .map_err(|e| miette!("Vertex auth injection failed: {e}"))?
+    } else {
+        // For other requests, use standard credential rewriting
+        rewrite_http_header_block(&req.raw_header[..header_end], resolver)
+            .map_err(|e| miette!("credential injection failed: {e}"))?
+    };
+
+    // Rest of the function remains the same...
     upstream
         .write_all(&rewrite_result.rewritten)
         .await
@@ -309,12 +442,9 @@ where
     if matches!(outcome, RelayOutcome::Upgraded { .. }) {
         let header_str = String::from_utf8_lossy(&req.raw_header[..header_end]);
         if !client_requested_upgrade(&header_str) {
-            warn!(
-                method = %req.action,
-                target = %req.target,
-                "upstream sent unsolicited 101 without client Upgrade request — closing connection"
-            );
-            return Ok(RelayOutcome::Consumed);
+            return Err(miette!(
+                "upstream sent unsolicited 101 without client Upgrade request"
+            ));
         }
     }
 

@@ -14,5 +14,14 @@ repository.workspace = true
 openshell-core = { path = "../openshell-core" }
 thiserror = { workspace = true }
 
+# Runtime token exchange dependencies
+tokio = { workspace = true }
+async-trait = { workspace = true }
+chrono = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+
 [lints]
 workspace = true

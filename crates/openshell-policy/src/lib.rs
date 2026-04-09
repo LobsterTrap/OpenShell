@@ -16,7 +16,7 @@ use std::path::Path;
 use miette::{IntoDiagnostic, Result, WrapErr};
 use openshell_core::proto::{
     FilesystemPolicy, L7Allow, L7QueryMatcher, L7Rule, LandlockPolicy, NetworkBinary,
-    NetworkEndpoint, NetworkPolicyRule, ProcessPolicy, SandboxPolicy,
+    NetworkEndpoint, NetworkPolicyRule, OAuthCredentialsPolicy, ProcessPolicy, SandboxPolicy,
 };
 use serde::{Deserialize, Serialize};
 
@@ -36,6 +36,8 @@ struct PolicyFile {
     process: Option<ProcessDef>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     network_policies: BTreeMap<String, NetworkPolicyRuleDef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    oauth_credentials: Option<OAuthCredentialsDef>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -63,6 +65,17 @@ struct ProcessDef {
     run_as_user: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     run_as_group: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OAuthCredentialsDef {
+    #[serde(default)]
+    auto_refresh: bool,
+    #[serde(default, skip_serializing_if = "is_zero_i64")]
+    refresh_margin_seconds: i64,
+    #[serde(default, skip_serializing_if = "is_zero_i64")]
+    max_lifetime_seconds: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -102,6 +115,10 @@ struct NetworkEndpointDef {
 }
 
 fn is_zero(v: &u32) -> bool {
+    *v == 0
+}
+
+fn is_zero_i64(v: &i64) -> bool {
     *v == 0
 }
 
@@ -244,6 +261,11 @@ fn to_proto(raw: PolicyFile) -> SandboxPolicy {
             run_as_group: p.run_as_group,
         }),
         network_policies,
+        oauth_credentials: raw.oauth_credentials.map(|oauth| OAuthCredentialsPolicy {
+            auto_refresh: oauth.auto_refresh,
+            refresh_margin_seconds: oauth.refresh_margin_seconds,
+            max_lifetime_seconds: oauth.max_lifetime_seconds,
+        }),
     }
 }
 
@@ -343,12 +365,28 @@ fn from_proto(policy: &SandboxPolicy) -> PolicyFile {
         })
         .collect();
 
+    let oauth_credentials = policy.oauth_credentials.as_ref().and_then(|oauth| {
+        if !oauth.auto_refresh
+            && oauth.refresh_margin_seconds == 0
+            && oauth.max_lifetime_seconds == 0
+        {
+            None
+        } else {
+            Some(OAuthCredentialsDef {
+                auto_refresh: oauth.auto_refresh,
+                refresh_margin_seconds: oauth.refresh_margin_seconds,
+                max_lifetime_seconds: oauth.max_lifetime_seconds,
+            })
+        }
+    });
+
     PolicyFile {
         version: policy.version,
         filesystem_policy,
         landlock,
         process,
         network_policies,
+        oauth_credentials,
     }
 }
 
@@ -445,6 +483,7 @@ pub fn restrictive_default_policy() -> SandboxPolicy {
             run_as_group: "sandbox".into(),
         }),
         network_policies: HashMap::new(),
+        oauth_credentials: None,
     }
 }
 
@@ -1006,6 +1045,7 @@ network_policies:
             filesystem: None,
             landlock: None,
             network_policies: HashMap::new(),
+            oauth_credentials: None,
         };
         assert!(validate_sandbox_policy(&policy).is_ok());
     }

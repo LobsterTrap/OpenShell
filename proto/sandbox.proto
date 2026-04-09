@@ -17,6 +17,24 @@ message SandboxPolicy {
   ProcessPolicy process = 4;
   // Network access policies keyed by name (e.g. "claude_code", "gitlab").
   map<string, NetworkPolicyRule> network_policies = 5;
+  // OAuth credential auto-refresh policy.
+  OAuthCredentialsPolicy oauth_credentials = 6;
+}
+
+// OAuth credential auto-refresh policy configuration.
+message OAuthCredentialsPolicy {
+  // Enable automatic token refresh for long-running sandboxes.
+  // When true, the sandbox will periodically re-fetch credentials from the gateway.
+  // Default: false (must be explicitly enabled for security).
+  bool auto_refresh = 1;
+  // Seconds before expiry to trigger refresh (e.g., 300 = 5 minutes).
+  // If 0 or unspecified, uses provider default (typically 300).
+  int64 refresh_margin_seconds = 2;
+  // Maximum sandbox lifetime in seconds.
+  // -1 = infinite (no limit)
+  // 0 or unspecified = 86400 (24 hours default)
+  // >0 = custom limit
+  int64 max_lifetime_seconds = 3;
 }
 
 // Filesystem access policy.

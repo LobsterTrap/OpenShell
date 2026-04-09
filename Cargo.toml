@@ -94,6 +94,12 @@ k8s-openapi = { version = "0.21.1", features = ["v1_26"] }
 # IDs
 uuid = { version = "1.10", features = ["v4"] }
 
+# Time/Date
+chrono = "0.4"
+
+# Async
+async-trait = "0.1"
+
 [workspace.lints.rust]
 unsafe_code = "warn"
 rust_2018_idioms = { level = "warn", priority = -1 }

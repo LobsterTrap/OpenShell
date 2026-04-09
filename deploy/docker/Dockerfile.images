@@ -88,8 +88,6 @@ FROM rust-builder-skeleton AS rust-deps
 
 RUN --mount=type=cache,id=cargo-registry-${TARGETARCH},sharing=locked,target=/usr/local/cargo/registry \
     --mount=type=cache,id=cargo-git-${TARGETARCH},sharing=locked,target=/usr/local/cargo/git \
-    --mount=type=cache,id=cargo-target-${TARGETARCH}-${CARGO_TARGET_CACHE_SCOPE},sharing=locked,target=/build/target \
-    --mount=type=cache,id=sccache-${TARGETARCH},sharing=locked,target=/tmp/sccache \
     . cross-build.sh && cargo_cross_build --release -p openshell-server -p openshell-sandbox
 
 # ---------------------------------------------------------------------------
@@ -133,6 +131,7 @@ RUN --mount=type=cache,id=cargo-registry-${TARGETARCH},sharing=locked,target=/us
 
 FROM rust-deps AS supervisor-workspace
 ARG OPENSHELL_CARGO_VERSION
+ARG CACHE_BUST=1
 
 COPY crates/openshell-core/ crates/openshell-core/
 COPY crates/openshell-policy/ crates/openshell-policy/
@@ -150,12 +149,12 @@ RUN touch \
 FROM supervisor-workspace AS supervisor-builder
 ARG CARGO_CODEGEN_UNITS
 ARG EXTRA_CARGO_FEATURES=""
+ARG CACHE_BUST=1
 
 RUN --mount=type=cache,id=cargo-registry-${TARGETARCH},sharing=locked,target=/usr/local/cargo/registry \
     --mount=type=cache,id=cargo-git-${TARGETARCH},sharing=locked,target=/usr/local/cargo/git \
-    --mount=type=cache,id=cargo-target-${TARGETARCH}-${CARGO_TARGET_CACHE_SCOPE},sharing=locked,target=/build/target \
-    --mount=type=cache,id=sccache-${TARGETARCH},sharing=locked,target=/tmp/sccache \
     . cross-build.sh && \
+    echo "Cache bust: ${CACHE_BUST}" && \
     cargo_cross_build --release -p openshell-sandbox ${EXTRA_CARGO_FEATURES:+--features "$EXTRA_CARGO_FEATURES"} && \
     mkdir -p /build/out && \
     cp "$(cross_output_dir release)/openshell-sandbox" /build/out/

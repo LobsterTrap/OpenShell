@@ -802,6 +802,7 @@ mod tests {
                 run_as_group: "sandbox".to_string(),
             }),
             network_policies,
+            oauth_credentials: None,
         }
     }
 
@@ -1639,6 +1640,7 @@ process:
                 run_as_group: "sandbox".to_string(),
             }),
             network_policies,
+            oauth_credentials: None,
         };
 
         let engine = OpaEngine::from_proto(&proto).expect("engine from proto");
@@ -2255,6 +2257,7 @@ process:
                 run_as_group: "sandbox".to_string(),
             }),
             network_policies,
+            oauth_credentials: None,
         };
         let engine = OpaEngine::from_proto(&proto).expect("Failed to create engine from proto");
 
@@ -2485,6 +2488,7 @@ network_policies:
                 run_as_group: "sandbox".to_string(),
             }),
             network_policies,
+            oauth_credentials: None,
         };
         let engine = OpaEngine::from_proto(&proto).unwrap();
         // Port 443

@@ -2919,8 +2919,15 @@ dependencies = [
 name = "openshell-providers"
 version = "0.0.0"
 dependencies = [
+ "async-trait",
+ "chrono",
  "openshell-core",
+ "reqwest",
+ "serde",
+ "serde_json",
  "thiserror 2.0.18",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -3009,6 +3016,7 @@ dependencies = [
  "miette",
  "openshell-core",
  "openshell-policy",
+ "openshell-providers",
  "openshell-router",
  "petname",
  "pin-project-lite",

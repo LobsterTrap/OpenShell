@@ -23,12 +23,13 @@ pub(crate) const PLACEHOLDER_PREFIX_PUBLIC: &str = PLACEHOLDER_PREFIX;
 fn direct_inject_credentials() -> &'static [&'static str] {
     &[
         // Vertex AI credentials for claude CLI
-        // NOTE: VERTEX_OAUTH_TOKEN is NOT included here - sandboxes generate
-        // fresh tokens on-demand from the uploaded ADC file instead of using
-        // a pre-generated (and likely expired) token from the provider database.
+        // VERTEX_ADC contains the full ADC JSON for Claude CLI to parse and write to file
+        "VERTEX_ADC",
         "ANTHROPIC_VERTEX_PROJECT_ID",
         "ANTHROPIC_VERTEX_REGION",
         "CLAUDE_CODE_USE_VERTEX",
+        // NOTE: VERTEX_ACCESS_TOKEN is NOT in this list - it's accessed via
+        // the SecretResolver in the proxy to inject Authorization headers
     ]
 }
 
@@ -84,7 +85,7 @@ pub(crate) struct RewriteTargetResult {
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Default)]
-pub struct SecretResolver {
+pub(crate) struct SecretResolver {
     by_placeholder: HashMap<String, String>,
 }
 

@@ -1738,7 +1738,35 @@ async fn handle_forward_proxy(
     };
     let host_lc = host.to_ascii_lowercase();
 
-    // 2. Reject HTTPS — must use CONNECT for TLS
+    // 2. Intercept OAuth token exchange for Claude CLI compatibility
+    //    When Claude CLI tries to exchange fake ADC credentials, return our cached token
+    if host_lc == "oauth2.googleapis.com" && path == "/token" && method == "POST" {
+        if let Some(resolver) = &secret_resolver {
+            // Try to get VERTEX_ACCESS_TOKEN from the resolver
+            if let Some(vertex_token) = std::env::var("VERTEX_ACCESS_TOKEN").ok() {
+                info!(
+                    dst_host = %host_lc,
+                    dst_port = port,
+                    "Intercepting OAuth token exchange, returning cached Vertex token"
+                );
+
+                // Return a mock OAuth response with our cached token
+                let response_body = format!(
+                    r#"{{"access_token":"{}","token_type":"Bearer","expires_in":3600}}"#,
+                    vertex_token
+                );
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
+                    response_body.len(),
+                    response_body
+                );
+                respond(client, response.as_bytes()).await?;
+                return Ok(());
+            }
+        }
+    }
+
+    // 3. Reject HTTPS — must use CONNECT for TLS
     if scheme == "https" {
         info!(
             dst_host = %host_lc,

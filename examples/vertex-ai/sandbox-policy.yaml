@@ -8,11 +8,18 @@
 
 version: 1
 
+# OAuth credential auto-refresh configuration (optional)
+# Uncomment to enable auto-refresh for long-running sandboxes
+# oauth_credentials:
+#   auto_refresh: true              # Enable automatic token refresh (default: false)
+#   refresh_margin_seconds: 300     # Refresh 5 minutes before expiry (default: 300)
+#   max_lifetime_seconds: 7200      # Maximum sandbox lifetime: 2 hours (default: 86400 = 24h, -1 = infinite)
+
 network_policies:
   google_vertex:
     name: google-vertex
     endpoints:
-      # Google OAuth endpoints for authentication
+      # Google OAuth endpoints (for ADC token exchange - not intercepted)
       - host: oauth2.googleapis.com
         port: 443
       - host: accounts.google.com
@@ -21,20 +28,35 @@ network_policies:
         port: 443
 
       # Vertex AI endpoints (global and regional)
+      # protocol: rest enables L7 HTTP inspection for Authorization header injection
       - host: aiplatform.googleapis.com
         port: 443
+        protocol: rest
+        access: full
       - host: us-east5-aiplatform.googleapis.com
         port: 443
+        protocol: rest
+        access: full
       - host: us-central1-aiplatform.googleapis.com
         port: 443
+        protocol: rest
+        access: full
       - host: us-west1-aiplatform.googleapis.com
         port: 443
+        protocol: rest
+        access: full
       - host: europe-west1-aiplatform.googleapis.com
         port: 443
+        protocol: rest
+        access: full
       - host: europe-west4-aiplatform.googleapis.com
         port: 443
+        protocol: rest
+        access: full
       - host: asia-northeast1-aiplatform.googleapis.com
         port: 443
+        protocol: rest
+        access: full
 
     binaries:
       # Claude CLI for direct Vertex AI usage
@@ -53,3 +75,39 @@ network_policies:
     binaries:
       - path: /usr/bin/curl
       - path: /usr/bin/python3
+
+  pypi:
+    name: pypi
+    endpoints:
+      # Python Package Index (PyPI) for pip install
+      - host: pypi.org
+        port: 443
+      - host: files.pythonhosted.org
+        port: 443
+      - host: "*.pythonhosted.org"
+        port: 443
+      - host: pypi.python.org
+        port: 443
+    binaries:
+      # Python executables (pip runs as Python subprocess)
+      - path: /usr/bin/python3
+      - path: /usr/bin/python3.13
+      - path: /usr/local/bin/python3
+      - path: /usr/bin/python
+      # Pip executables
+      - path: /usr/local/bin/pip
+      - path: /usr/local/bin/pip3
+      - path: /usr/bin/pip
+      - path: /usr/bin/pip3
+      # Venv paths (pip installs to venv by default)
+      - path: /sandbox/.venv/bin/python3
+      - path: /sandbox/.venv/bin/python3.13
+      - path: /sandbox/.venv/bin/python
+      - path: /sandbox/.venv/bin/pip3
+      - path: /sandbox/.venv/bin/pip
+      # UV Python installation (resolved symlink path)
+      - path: /sandbox/.uv/python/cpython-3.13.12-linux-aarch64-gnu/bin/python3.13
+      - path: /sandbox/.uv/python/cpython-3.13-linux-aarch64-gnu/bin/python3
+      - path: /sandbox/.uv/python/cpython-3.13-linux-aarch64-gnu/bin/python
+      # Testing tools
+      - path: /usr/bin/curl

@@ -9,6 +9,18 @@ mod providers;
 #[cfg(test)]
 mod test_helpers;
 
+// Runtime credential system
+pub mod runtime;
+pub mod secret_store;
+pub mod stores;
+pub mod token_cache;
+
+// Re-export specific providers for direct use
+pub mod vertex {
+    pub use crate::providers::vertex::*;
+}
+
+use async_trait::async_trait;
 use std::collections::HashMap;
 use std::path::Path;
 
@@ -16,6 +28,12 @@ pub use openshell_core::proto::Provider;
 
 pub use context::{DiscoveryContext, RealDiscoveryContext};
 pub use discovery::discover_with_spec;
+
+// Re-export runtime types
+pub use runtime::{RuntimeError, RuntimeResult, TokenResponse};
+pub use secret_store::{SecretError, SecretResult, SecretStore};
+pub use stores::DatabaseStore;
+pub use token_cache::TokenCache;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ProviderError {
@@ -42,6 +60,7 @@ pub struct ProviderDiscoverySpec {
     pub credential_env_vars: &'static [&'static str],
 }
 
+#[async_trait]
 pub trait ProviderPlugin: Send + Sync {
     /// Canonical provider id (for example: "claude", "gitlab").
     fn id(&self) -> &'static str;
@@ -63,6 +82,22 @@ pub trait ProviderPlugin: Send + Sync {
     /// can be layered in incrementally.
     fn apply_to_sandbox(&self, _provider: &Provider) -> Result<(), ProviderError> {
         Ok(())
+    }
+
+    /// Get a runtime token by fetching and interpreting secrets from storage.
+    ///
+    /// This is called during sandbox execution to exchange stored credentials
+    /// for access tokens. The provider knows how to interpret its credential format:
+    /// - Vertex: fetches VERTEX_ADC from store, exchanges for OAuth token
+    /// - Anthropic: fetches API key from store, returns it directly
+    /// - OpenAI: fetches API key from store, returns it directly
+    ///
+    /// Default implementation returns NotConfigured error - providers that need
+    /// runtime token exchange must implement this.
+    async fn get_runtime_token(&self, _store: &dyn SecretStore) -> RuntimeResult<TokenResponse> {
+        Err(RuntimeError::NotConfigured(
+            "This provider does not support runtime token exchange".to_string(),
+        ))
     }
 }
 
@@ -86,7 +121,7 @@ impl ProviderRegistry {
         registry.register(providers::gitlab::GitlabProvider);
         registry.register(providers::github::GithubProvider);
         registry.register(providers::outlook::OutlookProvider);
-        registry.register(providers::vertex::VertexProvider);
+        registry.register(providers::vertex::VertexProvider::new());
         registry
     }
 
