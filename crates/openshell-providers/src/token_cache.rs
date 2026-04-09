@@ -80,30 +80,35 @@ impl TokenCache {
     /// * `provider` - The provider plugin to interpret credentials
     /// * `store` - The secret store to fetch credentials from
     /// * `refresh_margin_seconds` - Refresh tokens this many seconds before expiry (default: 300 = 5 min)
+    /// * `auto_refresh` - Enable background auto-refresh task (default: true)
     pub fn new(
         provider: Arc<dyn ProviderPlugin>,
         store: Arc<dyn SecretStore>,
         refresh_margin_seconds: i64,
+        auto_refresh: bool,
     ) -> Self {
         let tokens = Arc::new(RwLock::new(HashMap::new()));
 
-        // Start background refresh task
-        let refresh_task = {
+        // Conditionally start background refresh task based on auto_refresh flag
+        let refresh_task = if auto_refresh {
             let tokens = tokens.clone();
             let provider = provider.clone();
             let store = store.clone();
             let margin = refresh_margin_seconds;
 
-            tokio::spawn(async move {
+            Some(tokio::spawn(async move {
                 Self::auto_refresh_loop(tokens, provider, store, margin).await;
-            })
+            }))
+        } else {
+            tracing::info!("Auto-refresh disabled for token cache");
+            None
         };
 
         Self {
             provider,
             store,
             tokens,
-            refresh_task: Some(refresh_task),
+            refresh_task,
             refresh_margin_seconds,
         }
     }
@@ -290,7 +295,7 @@ mod tests {
     async fn test_cache_miss_fetches_token() {
         let provider = Arc::new(MockProvider);
         let store = Arc::new(DatabaseStore::new(HashMap::new()));
-        let cache = TokenCache::new(provider, store, 300);
+        let cache = TokenCache::new(provider, store, 300, true);
 
         let token = cache.get_token("mock").await.unwrap();
         assert_eq!(token, "mock-token");
@@ -300,7 +305,7 @@ mod tests {
     async fn test_cache_hit_avoids_fetch() {
         let provider = Arc::new(MockProvider);
         let store = Arc::new(DatabaseStore::new(HashMap::new()));
-        let cache = TokenCache::new(provider, store, 300);
+        let cache = TokenCache::new(provider, store, 300, true);
 
         // First call - cache miss
         let token1 = cache.get_token("mock").await.unwrap();

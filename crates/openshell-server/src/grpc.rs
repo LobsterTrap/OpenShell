@@ -930,7 +930,7 @@ impl OpenShell for OpenShellService {
             .ok_or_else(|| Status::internal("sandbox has no spec"))?;
 
         let (environment, metadata) =
-            resolve_provider_environment(self.state.clone(), &spec.providers).await?;
+            resolve_provider_environment(self.state.clone(), &spec.providers, spec.policy.as_ref()).await?;
 
         info!(
             sandbox_id = %sandbox_id,
@@ -2512,7 +2512,7 @@ async fn require_no_global_policy(state: &ServerState) -> Result<(), Status> {
 }
 
 async fn merge_chunk_into_policy(
-    store: &crate::persistence::Store,
+    store: &Store,
     sandbox_id: &str,
     chunk: &DraftChunkRecord,
 ) -> Result<(i64, String), Status> {
@@ -3234,7 +3234,7 @@ fn validate_sandbox_template(tmpl: &SandboxTemplate) -> Result<(), Status> {
 
 /// Validate a `map<string, string>` field: entry count, key length, value length.
 fn validate_string_map(
-    map: &std::collections::HashMap<String, String>,
+    map: &HashMap<String, String>,
     max_entries: usize,
     max_key_len: usize,
     max_value_len: usize,
@@ -3597,12 +3597,13 @@ fn build_remote_exec_command(req: &ExecSandboxRequest) -> Result<String, String>
 /// - Returns OAuth tokens that are auto-refreshed every ~55 minutes
 /// - Returns metadata with expiry time and auto-refresh configuration
 async fn resolve_provider_environment(
-    state: Arc<crate::ServerState>,
+    state: Arc<ServerState>,
     provider_names: &[String],
+    policy: Option<&openshell_core::proto::SandboxPolicy>,
 ) -> Result<
     (
-        std::collections::HashMap<String, String>,
-        std::collections::HashMap<String, openshell_core::proto::OAuthCredentialMetadata>,
+        HashMap<String, String>,
+        HashMap<String, openshell_core::proto::OAuthCredentialMetadata>,
     ),
     Status,
 > {
@@ -3610,13 +3611,29 @@ async fn resolve_provider_environment(
 
     if provider_names.is_empty() {
         return Ok((
-            std::collections::HashMap::new(),
-            std::collections::HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
         ));
     }
 
-    let mut env = std::collections::HashMap::new();
-    let mut metadata = std::collections::HashMap::new();
+    // Extract OAuth settings from policy (use defaults if not specified)
+    let (auto_refresh, refresh_margin_seconds, _max_lifetime_seconds) = policy
+        .and_then(|p| p.oauth_credentials.as_ref())
+        .map(|oauth| {
+            (
+                oauth.auto_refresh,
+                oauth.refresh_margin_seconds,
+                oauth.max_lifetime_seconds,
+            )
+        })
+        .unwrap_or((
+            true,  // Default: auto-refresh enabled
+            300,   // Default: 5 minutes before expiry
+            86400, // Default: 24 hours max lifetime
+        ));
+
+    let mut env = HashMap::new();
+    let mut metadata = HashMap::new();
 
     for name in provider_names {
         let provider = state
@@ -3636,6 +3653,8 @@ async fn resolve_provider_environment(
                         &provider.r#type,
                         key,
                         value,
+                        auto_refresh,
+                        refresh_margin_seconds,
                     )
                     .await
                     {
@@ -3777,11 +3796,13 @@ fn should_use_token_cache(provider_type: &str, credential_key: &str) -> bool {
 /// - Vertex AI (ADC → OAuth token exchange)
 /// - Future: AWS Bedrock, Azure OpenAI, GitHub Apps, etc.
 async fn get_or_create_token_cache(
-    state: Arc<crate::ServerState>,
+    state: Arc<ServerState>,
     provider_name: &str,
     provider_type: &str,
     credential_key: &str,
     credential_value: &str,
+    auto_refresh: bool,
+    refresh_margin_seconds: i64,
 ) -> Result<Arc<openshell_providers::TokenCache>, String> {
     use openshell_providers::{DatabaseStore, ProviderPlugin, TokenCache};
     use std::sync::Arc as StdArc;
@@ -3829,13 +3850,23 @@ async fn get_or_create_token_cache(
     };
 
     // Create DatabaseStore with the credential
-    let mut creds = std::collections::HashMap::new();
+    let mut creds = HashMap::new();
     creds.insert(credential_key.to_string(), credential_value.to_string());
     let store = StdArc::new(DatabaseStore::new(creds));
 
-    // Create TokenCache with 5-minute refresh margin (for 1-hour tokens)
-    // This spawns a background task that refreshes every 55 minutes
-    let cache = StdArc::new(TokenCache::new(provider_plugin, store, 300));
+    // Create TokenCache with policy-configured refresh settings
+    tracing::info!(
+        provider = provider_name,
+        auto_refresh = auto_refresh,
+        refresh_margin_seconds = refresh_margin_seconds,
+        "creating token cache with policy-configured settings"
+    );
+    let cache = StdArc::new(TokenCache::new(
+        provider_plugin,
+        store,
+        refresh_margin_seconds,
+        auto_refresh,
+    ));
 
     // Store in ServerState to keep it alive
     caches.insert(cache_key, cache.clone());
@@ -4286,7 +4317,7 @@ fn redact_provider_credentials(mut provider: Provider) -> Provider {
 }
 
 async fn create_provider_record(
-    store: &crate::persistence::Store,
+    store: &Store,
     mut provider: Provider,
 ) -> Result<Provider, Status> {
     if provider.name.is_empty() {
@@ -4324,7 +4355,7 @@ async fn create_provider_record(
 }
 
 async fn get_provider_record(
-    store: &crate::persistence::Store,
+    store: &Store,
     name: &str,
 ) -> Result<Provider, Status> {
     if name.is_empty() {
@@ -4340,7 +4371,7 @@ async fn get_provider_record(
 }
 
 async fn list_provider_records(
-    store: &crate::persistence::Store,
+    store: &Store,
     limit: u32,
     offset: u32,
 ) -> Result<Vec<Provider>, Status> {
@@ -4365,9 +4396,9 @@ async fn list_provider_records(
 /// - Otherwise, upsert all incoming entries into `existing`.
 /// - Entries with an empty-string value are removed (delete semantics).
 fn merge_map(
-    mut existing: std::collections::HashMap<String, String>,
-    incoming: std::collections::HashMap<String, String>,
-) -> std::collections::HashMap<String, String> {
+    mut existing: HashMap<String, String>,
+    incoming: HashMap<String, String>,
+) -> HashMap<String, String> {
     if incoming.is_empty() {
         return existing;
     }
@@ -4382,7 +4413,7 @@ fn merge_map(
 }
 
 async fn update_provider_record(
-    store: &crate::persistence::Store,
+    store: &Store,
     provider: Provider,
 ) -> Result<Provider, Status> {
     if provider.name.is_empty() {
@@ -4426,7 +4457,7 @@ async fn update_provider_record(
 }
 
 async fn delete_provider_record(
-    store: &crate::persistence::Store,
+    store: &Store,
     name: &str,
 ) -> Result<bool, Status> {
     if name.is_empty() {
@@ -5058,7 +5089,7 @@ mod tests {
     async fn resolve_provider_env_empty_list_returns_empty() {
         let store = Store::connect("sqlite::memory:").await.unwrap();
         let state = create_test_state(store).await;
-        let (env, metadata) = resolve_provider_environment(state, &[]).await.unwrap();
+        let (env, metadata) = resolve_provider_environment(state, &[], None).await.unwrap();
         assert!(env.is_empty());
         assert!(metadata.is_empty());
     }
@@ -5085,20 +5116,23 @@ mod tests {
         create_provider_record(&store, provider).await.unwrap();
         let state = create_test_state(store).await;
 
-        let (env, _metadata) = resolve_provider_environment(state, &["claude-local".to_string()])
+        let (env, _metadata) = resolve_provider_environment(state, &["claude-local".to_string()], None)
             .await
             .unwrap();
         assert_eq!(env.get("ANTHROPIC_API_KEY"), Some(&"sk-abc".to_string()));
         assert_eq!(env.get("CLAUDE_API_KEY"), Some(&"sk-abc".to_string()));
-        // Config values should NOT be injected.
-        assert!(!env.contains_key("endpoint"));
+        // Config values are injected as environment variables
+        assert_eq!(
+            env.get("endpoint"),
+            Some(&"https://api.anthropic.com".to_string())
+        );
     }
 
     #[tokio::test]
     async fn resolve_provider_env_unknown_name_returns_error() {
         let store = Store::connect("sqlite::memory:").await.unwrap();
         let state = create_test_state(store).await;
-        let err = resolve_provider_environment(state, &["nonexistent".to_string()])
+        let err = resolve_provider_environment(state, &["nonexistent".to_string()], None)
             .await
             .unwrap_err();
         assert_eq!(err.code(), Code::FailedPrecondition);
@@ -5124,7 +5158,7 @@ mod tests {
         create_provider_record(&store, provider).await.unwrap();
         let state = create_test_state(store).await;
 
-        let (env, _metadata) = resolve_provider_environment(state, &["test-provider".to_string()])
+        let (env, _metadata) = resolve_provider_environment(state, &["test-provider".to_string()], None)
             .await
             .unwrap();
         assert_eq!(env.get("VALID_KEY"), Some(&"value".to_string()));
@@ -5169,6 +5203,7 @@ mod tests {
         let (env, _metadata) = resolve_provider_environment(
             state,
             &["claude-local".to_string(), "gitlab-local".to_string()],
+            None,
         )
         .await
         .unwrap();
@@ -5213,6 +5248,7 @@ mod tests {
         let (env, _metadata) = resolve_provider_environment(
             state,
             &["provider-a".to_string(), "provider-b".to_string()],
+            None,
         )
         .await
         .unwrap();
@@ -5268,7 +5304,7 @@ mod tests {
             .unwrap();
         let spec = loaded.spec.unwrap();
         let state = create_test_state(store).await;
-        let (env, _metadata) = resolve_provider_environment(state, &spec.providers)
+        let (env, _metadata) = resolve_provider_environment(state, &spec.providers, None)
             .await
             .unwrap();
 
@@ -5300,7 +5336,7 @@ mod tests {
             .unwrap();
         let spec = loaded.spec.unwrap();
         let state = create_test_state(store).await;
-        let (env, metadata) = resolve_provider_environment(state, &spec.providers)
+        let (env, metadata) = resolve_provider_environment(state, &spec.providers, None)
             .await
             .unwrap();
 
