@@ -573,6 +573,7 @@ async fn handle_tcp_connection(
             .map(|p| p.to_string_lossy().into_owned())
             .collect(),
         secret_resolver: secret_resolver.clone(),
+        oauth_config: l7_config.as_ref().and_then(|cfg| cfg.oauth.clone()),
     };
 
     if effective_tls_skip {
@@ -1741,7 +1742,7 @@ async fn handle_forward_proxy(
     // 2. Intercept OAuth token exchange for Claude CLI compatibility
     //    When Claude CLI tries to exchange fake ADC credentials, return our cached token
     if host_lc == "oauth2.googleapis.com" && path == "/token" && method == "POST" {
-        if let Some(resolver) = &secret_resolver {
+        if let Some(_resolver) = &secret_resolver {
             // Try to get VERTEX_ACCESS_TOKEN from the resolver
             if let Some(vertex_token) = std::env::var("VERTEX_ACCESS_TOKEN").ok() {
                 info!(
@@ -1901,6 +1902,7 @@ async fn handle_forward_proxy(
                 .map(|p| p.to_string_lossy().into_owned())
                 .collect(),
             secret_resolver: secret_resolver.clone(),
+            oauth_config: l7_config.oauth.clone(),
         };
 
         let (target_path, query_params) = crate::l7::rest::parse_target_query(&path)

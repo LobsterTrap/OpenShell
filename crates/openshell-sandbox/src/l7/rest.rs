@@ -12,7 +12,7 @@ use crate::secrets::rewrite_http_header_block;
 use miette::{IntoDiagnostic, Result, miette};
 use std::collections::HashMap;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 const MAX_HEADER_BYTES: usize = 16384; // 16 KiB for HTTP headers
 const RELAY_BUF_SIZE: usize = 8192;
@@ -252,38 +252,24 @@ where
     C: AsyncRead + AsyncWrite + Unpin,
     U: AsyncRead + AsyncWrite + Unpin,
 {
-    relay_http_request_with_resolver(req, client, upstream, None).await
+    relay_http_request_with_resolver(req, client, upstream, None, None).await
 }
 
 /// Check if the request is to a Vertex AI API endpoint
-fn is_vertex_api_request(header_str: &str) -> bool {
-    if let Some(host_line) = header_str.lines().find(|line| {
-        line.to_ascii_lowercase().starts_with("host:")
-    }) {
-        let host = host_line.split_once(':').map_or("", |(_, h)| h.trim());
-        // Strip port if present (e.g., "aiplatform.googleapis.com:443")
-        let host = host.split(':').next().unwrap_or(host);
-        let host_lower = host.to_ascii_lowercase();
-
-        // Match regional endpoints like us-east5-aiplatform.googleapis.com
-        // and global endpoint aiplatform.googleapis.com
-        host_lower.ends_with("-aiplatform.googleapis.com") ||
-            host_lower == "aiplatform.googleapis.com"
-    } else {
-        false
-    }
-}
-
-/// Get Vertex access token from environment or resolver
-fn get_vertex_access_token(resolver: Option<&crate::secrets::SecretResolver>) -> Option<String> {
+/// Get OAuth access token from environment or resolver
+fn get_oauth_access_token(
+    token_env_var: &str,
+    resolver: Option<&crate::secrets::SecretResolver>,
+) -> Option<String> {
     // Try environment variable first
-    if let Ok(token) = std::env::var("VERTEX_ACCESS_TOKEN") {
+    if let Ok(token) = std::env::var(token_env_var) {
         return Some(token.trim().to_string());  // Strip whitespace/newlines
     }
 
     // Try resolver with placeholder
     if let Some(resolver) = resolver {
-        if let Some(token) = resolver.resolve_placeholder("openshell:resolve:env:VERTEX_ACCESS_TOKEN") {
+        let placeholder = format!("openshell:resolve:env:{}", token_env_var);
+        if let Some(token) = resolver.resolve_placeholder(&placeholder) {
             return Some(token.trim().to_string());  // Strip whitespace/newlines
         }
     }
@@ -291,20 +277,24 @@ fn get_vertex_access_token(resolver: Option<&crate::secrets::SecretResolver>) ->
     None
 }
 
-/// Inject or replace Authorization header in HTTP request for Vertex AI
-fn inject_vertex_auth_header(
+/// Inject or replace Authorization header in HTTP request using OAuth config
+fn inject_oauth_header(
     raw: &[u8],
     resolver: Option<&crate::secrets::SecretResolver>,
+    oauth_config: &crate::l7::OAuthConfig,
 ) -> Result<crate::secrets::RewriteResult, crate::secrets::UnresolvedPlaceholderError> {
     use crate::secrets::{RewriteResult, rewrite_http_header_block};
 
     // Get the access token
-    let Some(access_token) = get_vertex_access_token(resolver) else {
+    let Some(access_token) = get_oauth_access_token(&oauth_config.token_env_var, resolver) else {
         // No token available, fall back to standard rewriting
         return rewrite_http_header_block(raw, resolver);
     };
 
-    info!("Injecting Vertex AI access token into Authorization header");
+    info!(
+        token_env_var = %oauth_config.token_env_var,
+        "Injecting OAuth access token into Authorization header"
+    );
 
     let header_end = raw.windows(4)
         .position(|w| w == b"\r\n\r\n")
@@ -325,8 +315,9 @@ fn inject_vertex_auth_header(
         output.extend_from_slice(b"\r\n");
     }
 
-    // Write Authorization header
-    let auth_header = format!("Authorization: Bearer {}", access_token);
+    // Write Authorization header using the template from config
+    let header_value = oauth_config.header_format.replace("{token}", &access_token);
+    let auth_header = format!("Authorization: {}", header_value);
     output.extend_from_slice(auth_header.as_bytes());
     output.extend_from_slice(b"\r\n");
 
@@ -356,6 +347,7 @@ pub(crate) async fn relay_http_request_with_resolver<C, U>(
     client: &mut C,
     upstream: &mut U,
     resolver: Option<&crate::secrets::SecretResolver>,
+    oauth_config: Option<&crate::l7::OAuthConfig>,
 ) -> Result<RelayOutcome>
 where
     C: AsyncRead + AsyncWrite + Unpin,
@@ -370,7 +362,6 @@ where
         }) {
             let host = host_line.split_once(':').map_or("", |(_, h)| h.trim());
             if host.to_ascii_lowercase() == "oauth2.googleapis.com" {
-                let host = host.split(':').next().unwrap_or(host);                                                                             
                 info!("Intercepting OAuth token exchange, returning fake success");
 
                 let response_body = r#"{"access_token":"fake-token-will-be-replaced-by-proxy","token_type":"Bearer","expires_in":3600}"#;
@@ -392,14 +383,11 @@ where
         .position(|w| w == b"\r\n\r\n")
         .map_or(req.raw_header.len(), |p| p + 4);
 
-    // Detect Vertex AI API requests and inject Authorization header
-    let header_str = String::from_utf8_lossy(&req.raw_header[..header_end]);
-    let is_vertex_request = is_vertex_api_request(&header_str);
-
-    let rewrite_result = if is_vertex_request {
-        // For Vertex AI requests, inject/replace Authorization header
-        inject_vertex_auth_header(&req.raw_header[..header_end], resolver)
-            .map_err(|e| miette!("Vertex auth injection failed: {e}"))?
+    // Inject OAuth header if configured for this endpoint
+    let rewrite_result = if let Some(oauth_cfg) = oauth_config {
+        // For OAuth-configured endpoints, inject/replace Authorization header
+        inject_oauth_header(&req.raw_header[..header_end], resolver, oauth_cfg)
+            .map_err(|e| miette!("OAuth header injection failed: {e}"))?
     } else {
         // For other requests, use standard credential rewriting
         rewrite_http_header_block(&req.raw_header[..header_end], resolver)
@@ -1735,7 +1723,7 @@ mod tests {
                 &req,
                 &mut proxy_to_client,
                 &mut proxy_to_upstream,
-                None,
+                None, None,
             ),
         )
         .await
@@ -1792,7 +1780,7 @@ mod tests {
                 &req,
                 &mut proxy_to_client,
                 &mut proxy_to_upstream,
-                None,
+                None, None,
             ),
         )
         .await
@@ -1917,7 +1905,7 @@ mod tests {
                 &req,
                 &mut proxy_to_client,
                 &mut proxy_to_upstream,
-                resolver.as_ref(),
+                resolver.as_ref(), None,
             ),
         )
         .await
@@ -2001,7 +1989,7 @@ mod tests {
                 &req,
                 &mut proxy_to_client,
                 &mut proxy_to_upstream,
-                None, // <-- No resolver, as in the L4 raw tunnel path
+                None, None, // <-- No resolver, as in the L4 raw tunnel path
             ),
         )
         .await
@@ -2089,7 +2077,7 @@ mod tests {
                 &req,
                 &mut proxy_to_client,
                 &mut proxy_to_upstream,
-                resolver,
+                resolver, None,
             ),
         )
         .await

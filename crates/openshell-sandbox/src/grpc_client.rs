@@ -221,7 +221,7 @@ pub struct SettingsPollResult {
     pub config_revision: u64,
     pub policy_source: PolicySource,
     /// Effective settings keyed by name.
-    pub settings: std::collections::HashMap<String, openshell_core::proto::EffectiveSetting>,
+    pub settings: HashMap<String, openshell_core::proto::EffectiveSetting>,
     /// When `policy_source` is `Global`, the version of the global policy revision.
     pub global_policy_version: u32,
 }

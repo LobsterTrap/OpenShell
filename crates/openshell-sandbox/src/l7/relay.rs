@@ -31,6 +31,8 @@ pub struct L7EvalContext {
     pub cmdline_paths: Vec<String>,
     /// Supervisor-only placeholder resolver for outbound headers.
     pub(crate) secret_resolver: Option<Arc<SecretResolver>>,
+    /// OAuth header injection configuration from endpoint policy.
+    pub(crate) oauth_config: Option<crate::l7::OAuthConfig>,
 }
 
 /// Run protocol-aware L7 inspection on a tunnel.
@@ -215,6 +217,7 @@ where
                 client,
                 upstream,
                 ctx.secret_resolver.as_deref(),
+                ctx.oauth_config.as_ref(),
             )
             .await?;
             match outcome {
@@ -388,9 +391,14 @@ where
         // Forward request with credential rewriting and relay the response.
         // relay_http_request_with_resolver handles both directions: it sends
         // the request upstream and reads the response back to the client.
-        let outcome =
-            crate::l7::rest::relay_http_request_with_resolver(&req, client, upstream, resolver)
-                .await?;
+        let outcome = crate::l7::rest::relay_http_request_with_resolver(
+            &req,
+            client,
+            upstream,
+            resolver,
+            ctx.oauth_config.as_ref(),
+        )
+        .await?;
 
         match outcome {
             RelayOutcome::Reusable => {} // continue loop

@@ -703,6 +703,12 @@ fn proto_to_opa_data_json(proto: &ProtoSandboxPolicy) -> String {
                     if !e.allowed_ips.is_empty() {
                         ep["allowed_ips"] = e.allowed_ips.clone().into();
                     }
+                    if let Some(oauth) = &e.oauth {
+                        ep["oauth"] = serde_json::json!({
+                            "token_env_var": oauth.token_env_var,
+                            "header_format": oauth.header_format,
+                        });
+                    }
                     ep
                 })
                 .collect();

@@ -71,6 +71,20 @@ message NetworkPolicyRule {
   repeated NetworkBinary binaries = 3;
 }
 
+// OAuth header injection configuration for HTTP endpoints.
+// Allows automatic injection of OAuth tokens from environment variables
+// into Authorization headers for API requests.
+message OAuthInjectionConfig {
+  // Environment variable name containing the OAuth token.
+  // The token will be resolved from the SecretResolver at request time.
+  // Example: "VERTEX_ACCESS_TOKEN", "AZURE_ACCESS_TOKEN"
+  string token_env_var = 1;
+  // Header value format template. Use {token} as placeholder.
+  // Example: "Bearer {token}"
+  // Default: "Bearer {token}"
+  string header_format = 2;
+}
+
 // A network endpoint (host + port) with optional L7 inspection config.
 message NetworkEndpoint {
   // Hostname or host glob pattern. Exact match is case-insensitive.
@@ -103,6 +117,10 @@ message NetworkEndpoint {
   // If `port` is set and `ports` is empty, `port` is normalized to `ports: [port]`.
   // If both are set, `ports` takes precedence.
   repeated uint32 ports = 9;
+  // OAuth header injection configuration for this endpoint.
+  // When set, the proxy will inject or replace the Authorization header
+  // with the token from the specified environment variable.
+  OAuthInjectionConfig oauth = 10;
 }
 
 // An L7 policy rule (allow-only).

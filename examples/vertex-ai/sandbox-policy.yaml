@@ -28,35 +28,57 @@ network_policies:
         port: 443
 
       # Vertex AI endpoints (global and regional)
-      # protocol: rest enables L7 HTTP inspection for Authorization header injection
+      # protocol: rest enables L7 HTTP inspection
+      # oauth: configures automatic OAuth token injection into Authorization headers
       - host: aiplatform.googleapis.com
         port: 443
         protocol: rest
         access: full
+        oauth:
+          token_env_var: VERTEX_ACCESS_TOKEN
+          header_format: "Bearer {token}"
       - host: us-east5-aiplatform.googleapis.com
         port: 443
         protocol: rest
         access: full
+        oauth:
+          token_env_var: VERTEX_ACCESS_TOKEN
+          header_format: "Bearer {token}"
       - host: us-central1-aiplatform.googleapis.com
         port: 443
         protocol: rest
         access: full
+        oauth:
+          token_env_var: VERTEX_ACCESS_TOKEN
+          header_format: "Bearer {token}"
       - host: us-west1-aiplatform.googleapis.com
         port: 443
         protocol: rest
         access: full
+        oauth:
+          token_env_var: VERTEX_ACCESS_TOKEN
+          header_format: "Bearer {token}"
       - host: europe-west1-aiplatform.googleapis.com
         port: 443
         protocol: rest
         access: full
+        oauth:
+          token_env_var: VERTEX_ACCESS_TOKEN
+          header_format: "Bearer {token}"
       - host: europe-west4-aiplatform.googleapis.com
         port: 443
         protocol: rest
         access: full
+        oauth:
+          token_env_var: VERTEX_ACCESS_TOKEN
+          header_format: "Bearer {token}"
       - host: asia-northeast1-aiplatform.googleapis.com
         port: 443
         protocol: rest
         access: full
+        oauth:
+          token_env_var: VERTEX_ACCESS_TOKEN
+          header_format: "Bearer {token}"
 
     binaries:
       # Claude CLI for direct Vertex AI usage

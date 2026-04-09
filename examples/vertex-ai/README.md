@@ -19,7 +19,8 @@ OpenShell uses a **two-layer plugin architecture** for credential management:
 **TokenCache (orchestration layer)**
 - Wraps ProviderPlugin + SecretStore
 - Caches tokens in memory
-- Auto-refreshes every 55 minutes (for 1-hour tokens)
+- Policy-configurable auto-refresh (default: 5 min before expiry)
+- Background task spawned only when `oauth_credentials.auto_refresh: true`
 
 ### Current Implementation
 
@@ -28,11 +29,19 @@ Provider Discovery
   └─> ~/.config/gcloud/application_default_credentials.json
        └─> Stored in gateway database (provider.credentials["VERTEX_ADC"])
 
-Runtime Flow
-  └─> DatabaseStore.get("VERTEX_ADC") → ADC JSON
-       └─> VertexProvider.get_runtime_token(store) → exchanges for OAuth
-            └─> TokenCache → caches + auto-refreshes
-                 └─> Sandbox → gets placeholder, proxy injects real token
+Runtime Flow (Sandbox Startup)
+  └─> Gateway reads sandbox policy oauth_credentials config
+       └─> DatabaseStore.get("VERTEX_ADC") → ADC JSON
+            └─> VertexProvider.get_runtime_token(store) → OAuth token
+                 └─> TokenCache(auto_refresh, refresh_margin) → caches token
+                      └─> Sandbox receives VERTEX_ACCESS_TOKEN env var
+
+HTTP Request Flow (claude CLI → Vertex AI)
+  └─> Proxy intercepts request to aiplatform.googleapis.com
+       └─> Matches endpoint with oauth config from policy
+            └─> Fetches current token from gateway TokenCache
+                 └─> Injects Authorization: Bearer <token>
+                      └─> Forwards to upstream with fresh token
 ```
 
 **How it works:**
@@ -42,23 +51,38 @@ Runtime Flow
    - Stores ADC JSON in gateway database (`provider.credentials["VERTEX_ADC"]`)
    - Creates DatabaseStore wrapper around credentials HashMap
 
-2. **Runtime Token Exchange** - When sandbox makes a request
+2. **Runtime Token Exchange** - When sandbox starts
+   - Gateway reads sandbox policy `oauth_credentials` settings
    - DatabaseStore fetches ADC from provider.credentials
    - VertexProvider exchanges ADC for OAuth access token (valid 1 hour)
-   - TokenCache caches token in memory with auto-refresh at 55 min mark
-   - Proxy injects fresh token into outbound request
+   - TokenCache caches token in memory (conditionally spawns background task)
+   - Sandbox receives `VERTEX_ACCESS_TOKEN` as environment variable
 
-3. **Auto-Refresh** - Background task
-   - Wakes up every 55 minutes (token duration - refresh margin)
-   - Proactively refreshes tokens 5 minutes before expiration
-   - Sandboxes work indefinitely without manual intervention
+3. **Auto-Refresh** - Gateway background task (policy-configured)
+   - **Enabled when:** `oauth_credentials.auto_refresh: true` in sandbox policy
+   - **Refresh timing:** `oauth_credentials.refresh_margin_seconds` before expiry (default: 300 = 5 min)
+   - **Wake interval:** Token duration minus refresh margin (e.g., 55 min for 1-hour tokens)
+   - **Updates:** Gateway TokenCache in memory (shared across all sandboxes)
+   - **Disabled when:** `auto_refresh: false` or field omitted (default)
+
+4. **OAuth Header Injection** - Proxy fetches fresh tokens on each request
+   - **Configured via:** `oauth` field on endpoint in sandbox policy
+   - **Example:** `oauth: {token_env_var: VERTEX_ACCESS_TOKEN, header_format: "Bearer {token}"}`
+   - **Proxy behavior:** 
+     1. Intercepts requests matching endpoint host/port
+     2. Reads token from environment variable (initial token) OR
+     3. Resolves token via SecretResolver (fetches from gateway TokenCache)
+     4. Injects/replaces `Authorization: Bearer <token>` header
+     5. Uses fresh token from gateway if auto-refresh enabled
+   - **Key:** Proxy is responsible for fetching refreshed tokens, not sandbox
+   - Generic mechanism - works for any OAuth provider (Vertex, AWS Bedrock, Azure, etc.)
 
 **Security Model:**
 - ✅ ADC stored in gateway database (encrypted at rest)
 - ✅ OAuth tokens cached in memory only (cleared on restart)
-- ✅ Sandboxes receive placeholders, never real tokens
-- ✅ Tokens expire in 1 hour (short-lived)
-- ✅ Auto-refresh prevents expiration during long sessions
+- ✅ Sandboxes receive short-lived tokens (1 hour expiry)
+- ✅ Tokens visible to sandbox processes but expire quickly
+- ✅ Auto-refresh optional (policy-configured, disabled by default)
 
 **Future SecretStore Implementations:**
 
@@ -107,11 +131,6 @@ export ANTHROPIC_VERTEX_REGION=us-east5
 openshell provider create --name vertex --type vertex --from-existing
 # ✅ Stores ADC in gateway database
 
-# 3a. (Optional) Enable auto-refresh for long-running sandboxes
-openshell provider update vertex \
-  --config auto_refresh=true \
-  --config max_lifetime_seconds=7200  # 2 hours
-
 # 4. Create sandbox
 openshell sandbox create --name vertex-test \
   --provider vertex \
@@ -121,7 +140,7 @@ openshell sandbox create --name vertex-test \
 claude  # Automatically uses Vertex AI
 ```
 
-**How it works:**
+**Complete Flow:**
 ```
 1. Provider Discovery (openshell provider create)
    ~/.config/gcloud/application_default_credentials.json
@@ -130,20 +149,44 @@ claude  # Automatically uses Vertex AI
 
 2. Sandbox Startup (openshell sandbox create)
    Sandbox requests credentials from Gateway
-        ↓ (gRPC: GetSandboxProviderEnvironment)
+        ↓ (gRPC: GetSandboxProviderEnvironment with policy)
+   Gateway reads oauth_credentials from sandbox policy
+        ↓ (auto_refresh, refresh_margin_seconds, max_lifetime_seconds)
    Gateway exchanges ADC for OAuth token
         ↓ (POST https://oauth2.googleapis.com/token)
+   Gateway creates TokenCache with policy settings
+        ↓ (conditionally spawns background task if auto_refresh: true)
    Gateway sends OAuth token to Sandbox
-        ↓ (valid for ~1 hour)
-   Sandbox stores token as placeholder
-        ↓ (VERTEX_ADC=openshell:resolve:env:VERTEX_ADC)
+        ↓ (VERTEX_ACCESS_TOKEN environment variable)
+   Sandbox stores token in memory
+        ↓ (accessible to proxy for header injection)
 
 3. HTTP Request (claude CLI → Vertex AI)
-   Sandbox proxy intercepts HTTP request
-        ↓ (detects placeholder in headers)
-   Proxy resolves placeholder to OAuth token
-        ↓ (from memory, received at startup)
+   Claude CLI makes request to aiplatform.googleapis.com
+        ↓ (HTTP/HTTPS request)
+   Sandbox proxy intercepts request
+        ↓ (matches endpoint host:port from policy)
+   Proxy finds oauth config on endpoint
+        ↓ (oauth: {token_env_var: VERTEX_ACCESS_TOKEN, header_format: "Bearer {token}"})
+   Proxy fetches current token
+        ↓ (tries env var first, then resolves from gateway TokenCache)
+   Proxy injects Authorization header
+        ↓ (Authorization: Bearer <fresh token from gateway>)
    Request forwarded to Vertex AI with real token
+
+4. Background Refresh (if auto_refresh: true)
+   Gateway TokenCache wakes up at scheduled interval
+        ↓ (e.g., every 55 minutes for 1-hour tokens)
+   Checks if token needs refresh (within margin of expiry)
+        ↓ (e.g., 5 minutes before expiration)
+   Re-exchanges ADC for fresh OAuth token
+        ↓ (POST https://oauth2.googleapis.com/token)
+   Updates cached token in gateway memory
+        ↓ (new expiry time, e.g., +1 hour)
+   Next proxy request fetches fresh token
+        ↓ (proxy gets updated token from gateway TokenCache)
+   Sandbox continues without restart
+        ↓ (proxy handles token refresh transparently)
 ```
 
 ### Manual Credential Injection
@@ -186,47 +229,71 @@ openshell provider create --name vertex --type vertex \
 - Exchanged fresh on each sandbox creation
 - Never persisted to disk
 
-**Sandboxes receive placeholders:**
+**Sandboxes receive environment variables:**
 ```bash
 # Inside sandbox environment (what processes see)
-VERTEX_ADC=openshell:resolve:env:VERTEX_ADC  # ← Placeholder (resolved by proxy)
+VERTEX_ADC='{"type":"...","project_id":"..."}' # ← Full ADC JSON (for Claude CLI to write to file)
+VERTEX_ACCESS_TOKEN=ya29.c.a0Aa...            # ← OAuth token (for proxy header injection)
 ANTHROPIC_VERTEX_PROJECT_ID=your-project      # ← Public metadata (direct value)
 ANTHROPIC_VERTEX_REGION=us-east5              # ← Public metadata (direct value)
 CLAUDE_CODE_USE_VERTEX=1                      # ← Boolean flag (direct value)
 ```
 
+**Security considerations:**
+- `VERTEX_ADC`: Full ADC JSON visible to all processes (needed for Claude CLI auto-detection)
+- `VERTEX_ACCESS_TOKEN`: OAuth token visible to all processes (short-lived, 1 hour expiry)
+- Both are injected by gateway at sandbox startup, cleared when sandbox terminates
+- OAuth tokens are refreshed in background when `oauth_credentials.auto_refresh: true`
+
 **On every HTTP request:**
-1. OpenShell proxy intercepts request
-2. Detects placeholder: `openshell:resolve:env:VERTEX_ADC`
-3. Resolves placeholder to OAuth token (received at sandbox startup)
-4. Proxy replaces placeholder with real OAuth token
-5. Request forwarded to Vertex AI
+1. OpenShell proxy intercepts request to `aiplatform.googleapis.com`
+2. Matches endpoint configuration from policy (host:port)
+3. Finds `oauth` config: `{token_env_var: VERTEX_ACCESS_TOKEN, header_format: "Bearer {token}"}`
+4. **Proxy fetches current token:**
+   - First tries environment variable: `$VERTEX_ACCESS_TOKEN` (initial token)
+   - If auto-refresh enabled: resolves via SecretResolver (fetches from gateway TokenCache)
+   - Gets fresh token even after background refresh (no sandbox restart needed)
+5. Injects/replaces `Authorization` header: `Authorization: Bearer ya29.c.a0Aa...`
+6. Forwards request to Vertex AI with real OAuth token
 
 **Benefits:**
-- Even if sandbox process is compromised, attacker only sees placeholder
-- Even if proxy memory is dumped, tokens expire in 1 hour
-- No long-lived credentials stored in sandbox
-- GCP can revoke access instantly (just update IAM)
-- Sandboxes automatically get fresh tokens on each restart
+- **Proxy-driven refresh:** Proxy fetches fresh tokens from gateway on each request
+- **No sandbox restart:** Background refresh updates gateway cache, proxy fetches automatically
+- **Short-lived exposure:** Initial token in environment variable, but expires in 1 hour
+- **Centralized management:** Gateway TokenCache manages refresh, sandboxes just consume
+- **Secure storage:** ADC stored in gateway database (never exposed to untrusted networks)
+- **Generic mechanism:** Works for any OAuth provider (AWS Bedrock, Azure OpenAI, etc.)
 
 ### Token Auto-Refresh
 
-**By default**, OAuth tokens are refreshed in the gateway but sandboxes must restart after ~1 hour when tokens expire.
+**By default**, OAuth tokens are **NOT** auto-refreshed. Sandboxes must restart after ~1 hour when tokens expire.
 
-**For long-running sandboxes**, enable auto-refresh:
+**For long-running sandboxes**, enable auto-refresh in the **sandbox policy**:
 
-```bash
-# Enable auto-refresh when creating provider
-openshell provider create --name vertex --type vertex --from-existing \
-  --config auto_refresh=true \
-  --config refresh_margin_seconds=300 \
-  --config max_lifetime_seconds=7200  # 2 hours
+```yaml
+# examples/vertex-ai/sandbox-policy.yaml
+version: 1
 
-# Or update existing provider
-openshell provider update vertex \
-  --config auto_refresh=true \
-  --config max_lifetime_seconds=86400  # 24 hours
+# OAuth credential auto-refresh configuration
+oauth_credentials:
+  auto_refresh: true              # Enable automatic token refresh (default: false)
+  refresh_margin_seconds: 300     # Refresh 5 minutes before expiry (default: 300)
+  max_lifetime_seconds: 7200      # Maximum sandbox lifetime: 2 hours (default: 86400 = 24h, -1 = infinite)
+
+network_policies:
+  # ... rest of policy
 ```
+
+**How it works:**
+- Gateway reads `oauth_credentials` from sandbox policy at startup
+- Creates TokenCache with configured settings in gateway memory
+- Conditionally spawns background task only when `auto_refresh: true`
+- Background task wakes up at `token_duration - refresh_margin_seconds` (e.g., 55 min for 1-hour tokens)
+- Refreshes tokens proactively before expiration
+- Updates TokenCache in gateway memory (shared across sandboxes)
+- **Key:** Proxy fetches fresh token from gateway on each request (via SecretResolver)
+- Sandbox receives initial token as environment variable at startup
+- No sandbox restart needed - proxy transparently uses refreshed tokens
 
 **Configuration options:**
 
@@ -238,31 +305,46 @@ openshell provider update vertex \
 
 **How gateway auto-refresh works:**
 
+**Without auto-refresh (default):**
 ```
 T+0:00 - Sandbox starts → Gateway exchanges ADC for OAuth token
-         ↓ (token valid for ~1 hour, cached in gateway)
-T+0:00 - Sandbox receives OAuth token in VERTEX_ADC placeholder
-T+0:30 - HTTP requests → Proxy resolves placeholder to cached OAuth token
-T+0:55 - Background refresh → Gateway exchanges for new token proactively
-         ↓ (new token valid until T+1:55, old token still valid until T+1:00)
-T+1:00 - HTTP requests → Proxy uses refreshed token (seamless for gateway)
-T+1:50 - Background refresh → Gateway refreshes again
-         ↓ (continues indefinitely)
+         ↓ (token valid for ~1 hour, cached in gateway TokenCache)
+T+0:00 - Sandbox receives VERTEX_ACCESS_TOKEN environment variable (initial token)
+T+0:30 - HTTP request → Proxy fetches token from env var
+         ↓ (injects Authorization: Bearer <token>)
+T+1:00 - Token expires in gateway cache
+T+1:01 - HTTP request → Proxy fetches expired token
+         ↓ (HTTP 401 Unauthorized from Vertex AI)
+         ↓ (sandbox must be restarted to get fresh token)
 ```
 
-**Current limitations:**
+**With auto-refresh enabled (`oauth_credentials.auto_refresh: true`):**
+```
+T+0:00 - Sandbox starts → Gateway exchanges ADC for OAuth token
+         ↓ (token valid for ~1 hour, background task spawned in gateway)
+T+0:00 - Sandbox receives VERTEX_ACCESS_TOKEN environment variable (initial token)
+T+0:30 - HTTP request → Proxy fetches token from env var
+         ↓ (injects Authorization: Bearer <token>)
+T+0:55 - Gateway background refresh → Exchanges ADC for new token
+         ↓ (new token valid until T+1:55, updates gateway TokenCache)
+T+1:00 - HTTP request → Proxy resolves token via SecretResolver
+         ↓ (fetches fresh token from gateway TokenCache)
+         ↓ (injects Authorization: Bearer <refreshed-token>)
+         ↓ (seamless, no restart needed)
+T+1:50 - Gateway background refresh → Exchanges for new token again
+         ↓ (continues until max_lifetime_seconds reached)
+T+2:00 - Sandbox reaches max_lifetime (if configured) → self-terminates
+```
 
-- ✅ Gateway caches and auto-refreshes tokens every 55 minutes
-- ✅ All sandboxes using same provider share the same TokenCache
-- ⏳ **Sandbox-side refresh not yet implemented** - sandboxes receive initial token only
-- ⏳ Long-running sandboxes (>1 hour) will fail after initial token expires
+**Features:**
 
-**When sandbox refresh is implemented (planned):**
-
-- ✅ No sandbox restarts required - tokens refresh automatically in sandbox too
-- ✅ No service interruption - refresh happens 5 minutes before expiry
-- ✅ Long-running sandboxes work up to `max_lifetime_seconds`
-- ✅ Sandboxes self-terminate when max lifetime is reached (prevents infinite sandboxes)
+- ✅ **Gateway-side refresh:** TokenCache in gateway refreshes tokens in background
+- ✅ **Proxy-driven fetch:** Proxy fetches fresh token from gateway on each request
+- ✅ **Auto-refresh:** Background task spawned when `auto_refresh: true` in policy
+- ✅ **Configurable timing:** `refresh_margin_seconds` (default: 300 = 5 min)
+- ✅ **Lifetime limits:** `max_lifetime_seconds` (default: 86400 = 24h, -1 = infinite)
+- ✅ **No restarts:** Proxy transparently uses refreshed tokens, no sandbox restart
+- ✅ **Seamless updates:** Refresh happens before expiry, no service interruption
 
 ## GKE Deployment
 
@@ -482,35 +564,49 @@ openshell provider create --name vertex --type vertex --from-existing
 ```yaml
 - host: your-region-aiplatform.googleapis.com
   port: 443
+  protocol: rest
+  access: full
+  oauth:
+    token_env_var: VERTEX_ACCESS_TOKEN
+    header_format: "Bearer {token}"
 ```
 
 Supported regions: us-central1, us-east5, us-west1, europe-west1, europe-west4, asia-northeast1, asia-southeast1
 
 ### Tokens not refreshing
 
-**Cause:** Background refresh task not running or failing.
+**Cause:** Auto-refresh not enabled in sandbox policy, or background task failing.
 
 **Solution:**
 
-1. **Check TokenCache is enabled:**
+1. **Verify auto-refresh is enabled in sandbox policy:**
+   ```yaml
+   # sandbox-policy.yaml must have:
+   oauth_credentials:
+     auto_refresh: true              # Required for background refresh
+     refresh_margin_seconds: 300     # Optional (default: 300)
+   ```
+
+2. **Check gateway logs for background refresh:**
    ```bash
-   # Gateway logs should show:
+   # Gateway logs should show (only when auto_refresh: true):
    # "background refresh triggered"
    # "background refresh succeeded"
    kubectl logs -n openshell deployment/openshell-gateway | grep "refresh"
+   
+   # If you see "Auto-refresh disabled for token cache", check your policy
    ```
 
-2. **Verify no network issues:**
+3. **Verify no network issues:**
    ```bash
-   # Test metadata service from gateway pod
+   # Test OAuth endpoint from gateway pod
    kubectl exec -n openshell deployment/openshell-gateway -- \
-     curl -v -H "Metadata-Flavor: Google" \
-     http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token
+     curl -v https://oauth2.googleapis.com/token
    ```
 
-3. **Check for errors in logs:**
+4. **Check for errors in logs:**
    ```bash
-   kubectl logs -n openshell deployment/openshell-gateway | grep -i error
+   kubectl logs -n openshell deployment/openshell-gateway | grep -i "refresh failed"
    ```
 
 ## Documentation
@@ -558,21 +654,31 @@ For detailed setup instructions and configuration options, see:
                               │ TokenResponse
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
-│ TokenCache                                                  │
-│   - Caches tokens (1 hour)                                  │
-│   - Auto-refreshes at ~55 min mark                          │
-│   - Background refresh task                                 │
+│ TokenCache (policy-configured, in gateway)                  │
+│   - Caches tokens in memory (~1 hour)                       │
+│   - Conditionally spawns background task                    │
+│   - Config: oauth_credentials from sandbox policy           │
 │   - Wraps: ProviderPlugin + SecretStore                     │
+│   - Background refresh updates cache every 55 min           │
 └─────────────────────────────┬───────────────────────────────┘
-                              │ Fresh token
+                              │ Initial token at startup
                               ▼
 ┌─────────────────────────────────────────────────────────────┐
-│ OpenShell Proxy                                             │
-│   1. Detects placeholder: openshell:resolve:env:X           │
-│   2. Calls TokenCache.get_token("vertex")                   │
-│   3. Gets fresh token (cached, auto-refreshed)              │
-│   4. Replaces placeholder with real token                   │
-│   5. Forwards to Vertex AI                                  │
+│ Sandbox Environment                                         │
+│   VERTEX_ACCESS_TOKEN=ya29.c.a0Aa... (initial token)       │
+└─────────────────────────────┬───────────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│ OpenShell Proxy (L7 HTTP Inspection)                        │
+│   1. Intercepts HTTP to aiplatform.googleapis.com          │
+│   2. Matches endpoint with oauth config from policy         │
+│   3. Fetches token:                                         │
+│      - First: tries $VERTEX_ACCESS_TOKEN (env var)          │
+│      - Then: resolves via SecretResolver (from gateway)     │
+│   4. Gets fresh token from gateway TokenCache               │
+│   5. Injects Authorization: Bearer <token>                  │
+│   6. Forwards to Vertex AI                                  │
 └─────────────────────────────┬───────────────────────────────┘
                               │ HTTP with real token
                               ▼
@@ -639,14 +745,14 @@ openshell sandbox create --provider vertex  # ✅ No upload flag
 ```
 
 **Why the change:**
-- ❌ Old: Credentials stored in sandbox filesystem
-- ✅ New: No credentials in sandbox (only placeholders)
-- ❌ Old: Manual token refresh needed
-- ✅ New: Automatic background refresh
+- ❌ Old: ADC credentials stored in sandbox filesystem
+- ✅ New: Only short-lived OAuth tokens (1 hour expiry)
+- ❌ Old: Manual token refresh needed (restart sandbox)
+- ✅ New: Optional automatic background refresh (policy-configured)
 - ❌ Old: Each sandbox manages tokens independently
 - ✅ New: Centralized token management at gateway
-- ❌ Old: Compromised sandbox = compromised credentials
-- ✅ New: Compromised sandbox = only has placeholder
+- ❌ Old: Compromised sandbox = compromised long-lived credentials
+- ✅ New: Compromised sandbox = short-lived token (max 1 hour)
 
 **If you're using the old approach:**
 1. Remove `--upload ~/.config/gcloud/` from sandbox creation
