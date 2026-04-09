@@ -117,24 +117,57 @@ pub mod my_oauth_provider {
 }
 ```
 
-## Provider Configuration
+### 5. Configure OAuth Header Injection
 
-When creating a provider with OAuth credentials, you can configure auto-refresh behavior:
+Add OAuth header injection to your sandbox policy for endpoints that require it:
 
-```bash
-openshell provider create vertex \
-  --type vertex \
-  --credential VERTEX_ADC=/path/to/adc.json \
-  --config auto_refresh=true \
-  --config refresh_margin_seconds=300 \
-  --config max_lifetime_seconds=7200
+```yaml
+# sandbox-policy.yaml
+version: 1
+
+oauth_credentials:
+  auto_refresh: true
+  refresh_margin_seconds: 300
+
+network_policies:
+  my_oauth_api:
+    name: my-oauth-api
+    endpoints:
+      - host: api.my-oauth-service.com
+        port: 443
+        protocol: rest        # Required for OAuth injection
+        access: full
+        oauth:
+          token_env_var: MY_OAUTH_TOKEN    # Matches provider credential key
+          header_format: "Bearer {token}"  # Or custom format
+```
+
+The `token_env_var` must match the credential key stored by your provider (e.g., `MY_OAUTH_CREDENTIAL` → token cached as `MY_OAUTH_TOKEN`).
+
+## OAuth Configuration
+
+OAuth auto-refresh behavior is configured **in the sandbox policy**, not at provider creation time. Provider creation is only for storing credentials.
+
+### Sandbox Policy Configuration
+
+Configure OAuth auto-refresh in your sandbox policy:
+
+```yaml
+# sandbox-policy.yaml
+version: 1
+
+# OAuth credential auto-refresh configuration
+oauth_credentials:
+  auto_refresh: true              # Enable automatic token refresh
+  refresh_margin_seconds: 300     # Refresh 5 minutes before expiry
+  max_lifetime_seconds: 7200      # Maximum sandbox lifetime: 2 hours
 ```
 
 ### Configuration Fields
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
-| `auto_refresh` | bool | `false` | Enable automatic token refresh for long-running sandboxes. **Must be explicitly enabled for security.** |
+| `auto_refresh` | bool | `false` | Enable automatic token refresh. **Must be explicitly enabled for security.** |
 | `refresh_margin_seconds` | int64 | `300` | Refresh tokens this many seconds before expiry (e.g., 300 = 5 minutes). |
 | `max_lifetime_seconds` | int64 | `86400` | Maximum sandbox lifetime in seconds. `-1` = infinite, `0` or unspecified = 24 hours, `>0` = custom limit. |
 
@@ -142,58 +175,122 @@ openshell provider create vertex \
 - `auto_refresh: false` - Disabled by default. Sandboxes must be explicitly configured for long-running operation.
 - `max_lifetime_seconds: 86400` - 24-hour default limit prevents infinite-running sandboxes.
 
-## Sandbox Policy Configuration
+### Provider Creation
 
-Override provider defaults in sandbox policy:
+When creating a provider, only store the OAuth credential:
 
-```yaml
-# sandbox-policy.yaml
-version: 1
-oauth_credentials:
-  auto_refresh: true
-  refresh_margin_seconds: 300
-  max_lifetime_seconds: 7200  # 2 hours
+```bash
+openshell provider create vertex \
+  --type vertex \
+  --credential VERTEX_ADC=/path/to/adc.json
 ```
 
-Policy-level configuration takes precedence over provider config.
+Auto-refresh configuration is handled in the sandbox policy, not at provider creation time.
+
+## OAuth Header Injection Configuration
+
+Configure automatic OAuth token injection for specific endpoints in your sandbox policy:
+
+```yaml
+network_policies:
+  my_api:
+    name: my-api
+    endpoints:
+      - host: api.example.com
+        port: 443
+        protocol: rest        # Enable L7 HTTP inspection
+        access: full          # Or use explicit rules
+        oauth:
+          token_env_var: MY_OAUTH_TOKEN    # Environment variable containing token
+          header_format: "Bearer {token}"  # Authorization header format
+```
+
+### OAuth Injection Fields
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `token_env_var` | string | required | Environment variable name containing the OAuth token (e.g., `VERTEX_ACCESS_TOKEN`). The proxy resolves this from the gateway `SecretResolver`. |
+| `header_format` | string | `"Bearer {token}"` | Authorization header value template. Use `{token}` as placeholder. |
+
+### How It Works
+
+When a sandbox makes an HTTP request to an endpoint with `oauth` configuration:
+
+1. **Policy Evaluation**: L7 proxy checks if endpoint has `oauth` field configured
+2. **Token Resolution**: Proxy fetches token from environment variable via gateway `SecretResolver`
+3. **Header Injection**: Proxy injects or replaces `Authorization` header using `header_format` template
+4. **Request Forwarding**: Modified request forwarded to upstream with OAuth token
+
+**Example for different OAuth formats:**
+
+```yaml
+# Standard Bearer token (default)
+oauth:
+  token_env_var: GITHUB_TOKEN
+  header_format: "Bearer {token}"
+
+# Custom OAuth scheme
+oauth:
+  token_env_var: CUSTOM_TOKEN
+  header_format: "OAuth {token}"
+
+# API key in custom header (non-standard but supported)
+oauth:
+  token_env_var: API_KEY
+  header_format: "{token}"  # Just the token, no prefix
+```
 
 ## How Auto-Refresh Works
 
+### Architecture Overview
+
+OpenShell uses a **proxy-driven token refresh** model where fresh tokens are fetched on-demand rather than stored in the sandbox:
+
+```
+┌──────────────┐         ┌──────────────┐         ┌──────────────┐
+│   Gateway    │         │   Sandbox    │         │   Upstream   │
+│  TokenCache  │         │    Proxy     │         │  API Server  │
+└──────────────┘         └──────────────┘         └──────────────┘
+       │                        │                         │
+       │ 1. Fetch fresh token   │                         │
+       │◄───────────────────────│                         │
+       │                        │                         │
+       │ 2. Return token        │                         │
+       ├───────────────────────►│                         │
+       │                        │ 3. Inject Authorization │
+       │                        │    header               │
+       │                        ├────────────────────────►│
+       │                        │                         │
+       │                        │ 4. Relay response       │
+       │                        │◄────────────────────────│
+       │                        │                         │
+```
+
 ### Gateway-Side Token Caching
 
-1. **Provider Creation**: User creates provider with OAuth credential
-2. **Gateway Startup**: Gateway creates TokenCache when first sandbox uses the provider
-3. **Token Exchange**: TokenCache calls `get_runtime_token()` to exchange credential for OAuth token
+1. **Provider Creation**: User creates provider with OAuth credential (e.g., `VERTEX_ADC`)
+2. **Gateway Startup**: Gateway creates `TokenCache` when first sandbox uses the provider
+3. **Token Exchange**: `TokenCache` calls `get_runtime_token()` to exchange credential for OAuth token
 4. **Caching**: Token cached in memory, valid for `expires_in` seconds
-5. **Background Refresh**: Background task wakes every 55 minutes (for 1-hour tokens)
-6. **Proactive Refresh**: Token refreshed 5 minutes before expiry (configurable via `refresh_margin_seconds`)
-7. **Shared Cache**: All sandboxes using same provider share the same TokenCache
+5. **Background Refresh** (when `auto_refresh: true`): Background task wakes periodically to refresh tokens
+6. **Proactive Refresh**: Token refreshed N seconds before expiry (configurable via `refresh_margin_seconds`)
+7. **Shared Cache**: All sandboxes using the same provider share the same `TokenCache`
 
-### Sandbox-Side Token Refresh (Future)
+### Proxy-Driven Token Refresh
 
-**Note: Sandbox-side refresh is not yet implemented. This describes the planned design.**
+When the sandbox makes an HTTP request to an OAuth-protected endpoint:
 
-When `auto_refresh: true`, long-running sandboxes will periodically re-fetch credentials:
+1. **Policy Lookup**: Proxy checks if endpoint has `oauth` configuration in sandbox policy
+2. **Token Fetch**: Proxy fetches fresh token from gateway `TokenCache` via `SecretResolver`
+3. **Header Injection**: Proxy injects/replaces `Authorization` header using `header_format` template
+4. **Request Forward**: Request forwarded to upstream with valid OAuth token
+5. **Seamless Refresh**: Gateway's background task ensures tokens are always fresh
 
-1. Sandbox receives initial token with `OAuthCredentialMetadata`:
-   ```json
-   {
-     "expires_in": 3600,
-     "auto_refresh": true,
-     "refresh_margin_seconds": 300,
-     "max_lifetime_seconds": 7200
-   }
-   ```
-
-2. Sandbox spawns background task that periodically calls `GetSandboxProviderEnvironment`
-
-3. Gateway returns fresh token from its TokenCache (no re-authentication needed)
-
-4. Sandbox updates its SecretResolver with the new token
-
-5. HTTP proxy seamlessly uses refreshed token for subsequent requests
-
-6. Sandbox self-terminates when `max_lifetime_seconds` is reached
+**Key benefits:**
+- Tokens never stored in sandbox (only fetched on-demand via gRPC)
+- Gateway handles all token lifecycle management
+- Sandbox proxy automatically uses latest token for each request
+- No stale token failures even for long-running sandboxes
 
 ## Token Refresh Timing
 
@@ -267,7 +364,12 @@ mod tests {
         let store = Arc::new(DatabaseStore::new(creds));
 
         let provider = Arc::new(MyOAuthProvider::new());
-        let cache = TokenCache::new(provider, store, 300);
+        let cache = TokenCache::new(
+            provider,
+            store,
+            300,   // refresh_margin_seconds
+            true,  // auto_refresh
+        );
 
         let token = cache.get_token("my-oauth-provider").await.unwrap();
         assert!(!token.is_empty());
@@ -287,16 +389,18 @@ mod tests {
 ## Implemented Features
 
 - ✅ Gateway-side token caching with background refresh
+- ✅ Proxy-driven token fetch (sandbox fetches fresh tokens on-demand from gateway)
+- ✅ Generic OAuth header injection via endpoint-level `oauth` configuration
 - ✅ Configurable refresh margin per provider (`refresh_margin_seconds`)
 - ✅ Maximum sandbox lifetime limits (`max_lifetime_seconds`)
 - ✅ Security-first defaults (`auto_refresh: false`)
-- ✅ OAuth metadata in gRPC responses (`OAuthCredentialMetadata`)
-- ✅ Sandbox policy overrides for OAuth configuration
+- ✅ Policy-based OAuth configuration (no hardcoded provider logic)
+- ✅ Support for custom `header_format` templates (Bearer, OAuth, custom schemes)
 
 ## Future Enhancements
 
-- ⏳ Sandbox-side periodic token refresh (background task in sandbox)
 - ⏳ Token persistence across gateway restarts (encrypted at-rest storage)
 - ⏳ Multi-region token caching (edge deployments)
 - ⏳ Token metrics and monitoring (expiry alerts, refresh failures)
 - ⏳ Per-sandbox token refresh tracking (observability)
+- ⏳ Token rotation support (graceful handling of multiple valid tokens)
