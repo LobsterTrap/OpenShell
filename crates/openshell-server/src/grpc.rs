@@ -929,9 +929,13 @@ impl OpenShell for OpenShellService {
             .spec
             .ok_or_else(|| Status::internal("sandbox has no spec"))?;
 
-        let (environment, metadata) =
-            resolve_provider_environment(self.state.clone(), &spec.providers, spec.policy.as_ref())
-                .await?;
+        let (environment, metadata) = resolve_provider_environment(
+            self.state.store.as_ref(),
+            &self.state.token_caches,
+            &spec.providers,
+            spec.policy.as_ref(),
+        )
+        .await?;
 
         info!(
             sandbox_id = %sandbox_id,
@@ -3598,7 +3602,8 @@ fn build_remote_exec_command(req: &ExecSandboxRequest) -> Result<String, String>
 /// - Returns OAuth tokens that are auto-refreshed every ~55 minutes
 /// - Returns metadata with expiry time and auto-refresh configuration
 async fn resolve_provider_environment(
-    state: Arc<ServerState>,
+    store: &Store,
+    token_caches: &tokio::sync::Mutex<HashMap<String, Arc<openshell_providers::TokenCache>>>,
     provider_names: &[String],
     policy: Option<&openshell_core::proto::SandboxPolicy>,
 ) -> Result<
@@ -3634,8 +3639,7 @@ async fn resolve_provider_environment(
     let mut metadata = HashMap::new();
 
     for name in provider_names {
-        let provider = state
-            .store
+        let provider = store
             .get_message_by_name::<Provider>(name)
             .await
             .map_err(|e| Status::internal(format!("failed to fetch provider '{name}': {e}")))?
@@ -3646,7 +3650,7 @@ async fn resolve_provider_environment(
                 // Check if this credential should use OAuth token auto-refresh
                 if should_use_token_cache(&provider.r#type, key) {
                     match get_or_create_token_cache(
-                        state.clone(),
+                        token_caches,
                         name,
                         &provider.r#type,
                         key,
@@ -3794,7 +3798,7 @@ fn should_use_token_cache(provider_type: &str, credential_key: &str) -> bool {
 /// - Vertex AI (ADC → OAuth token exchange)
 /// - Future: AWS Bedrock, Azure OpenAI, GitHub Apps, etc.
 async fn get_or_create_token_cache(
-    state: Arc<ServerState>,
+    token_caches: &tokio::sync::Mutex<HashMap<String, Arc<openshell_providers::TokenCache>>>,
     provider_name: &str,
     provider_type: &str,
     credential_key: &str,
@@ -3809,7 +3813,7 @@ async fn get_or_create_token_cache(
     // This allows multiple OAuth credentials per provider if needed
     let cache_key = format!("{provider_name}:{credential_key}");
 
-    let mut caches = state.token_caches.lock().await;
+    let mut caches = token_caches.lock().await;
 
     // Check if cache already exists
     if let Some(cache) = caches.get(&cache_key) {
@@ -4490,45 +4494,8 @@ mod tests {
     use openshell_core::proto::{Provider, SandboxSpec, SandboxTemplate};
     use prost::Message;
     use std::collections::HashMap;
-    use std::sync::Arc;
     use tonic::Code;
 
-    /// Create a minimal ServerState for testing
-    async fn create_test_state(store: Store) -> Arc<crate::ServerState> {
-        use crate::sandbox::SandboxClient;
-        use crate::sandbox_index::SandboxIndex;
-        use crate::sandbox_watch::SandboxWatchBus;
-        use crate::tracing_bus::TracingLogBus;
-        use crate::{Config, ServerState};
-
-        let config = Config::new(None);
-        // Create a sandbox client with minimal test configuration
-        let sandbox_client = SandboxClient::new(
-            "test-namespace".to_string(),
-            "test-image".to_string(),
-            "IfNotPresent".to_string(),
-            "http://localhost:50051".to_string(),
-            "ssh://localhost:2222".to_string(),
-            "test-secret".to_string(),
-            300,
-            String::new(), // client_tls_secret_name
-            String::new(), // host_gateway_ip
-        )
-        .await
-        .expect("failed to create test sandbox client");
-        let sandbox_index = SandboxIndex::new();
-        let sandbox_watch_bus = SandboxWatchBus::new();
-        let tracing_log_bus = TracingLogBus::new();
-
-        Arc::new(ServerState::new(
-            config,
-            Arc::new(store),
-            sandbox_client,
-            sandbox_index,
-            sandbox_watch_bus,
-            tracing_log_bus,
-        ))
-    }
 
     #[test]
     fn env_key_validation_accepts_valid_keys() {
@@ -5074,8 +5041,8 @@ mod tests {
     #[tokio::test]
     async fn resolve_provider_env_empty_list_returns_empty() {
         let store = Store::connect("sqlite::memory:").await.unwrap();
-        let state = create_test_state(store).await;
-        let (env, metadata) = resolve_provider_environment(state, &[], None)
+        let token_caches = tokio::sync::Mutex::new(HashMap::new());
+        let (env, metadata) = resolve_provider_environment(&store, &token_caches, &[], None)
             .await
             .unwrap();
         assert!(env.is_empty());
@@ -5102,12 +5069,16 @@ mod tests {
             .collect(),
         };
         create_provider_record(&store, provider).await.unwrap();
-        let state = create_test_state(store).await;
+        let token_caches = tokio::sync::Mutex::new(HashMap::new());
 
-        let (env, _metadata) =
-            resolve_provider_environment(state, &["claude-local".to_string()], None)
-                .await
-                .unwrap();
+        let (env, _metadata) = resolve_provider_environment(
+            &store,
+            &token_caches,
+            &["claude-local".to_string()],
+            None,
+        )
+        .await
+        .unwrap();
         assert_eq!(env.get("ANTHROPIC_API_KEY"), Some(&"sk-abc".to_string()));
         assert_eq!(env.get("CLAUDE_API_KEY"), Some(&"sk-abc".to_string()));
         // Config values are injected as environment variables
@@ -5120,8 +5091,8 @@ mod tests {
     #[tokio::test]
     async fn resolve_provider_env_unknown_name_returns_error() {
         let store = Store::connect("sqlite::memory:").await.unwrap();
-        let state = create_test_state(store).await;
-        let err = resolve_provider_environment(state, &["nonexistent".to_string()], None)
+        let token_caches = tokio::sync::Mutex::new(HashMap::new());
+        let err = resolve_provider_environment(&store, &token_caches, &["nonexistent".to_string()], None)
             .await
             .unwrap_err();
         assert_eq!(err.code(), Code::FailedPrecondition);
@@ -5145,10 +5116,10 @@ mod tests {
             config: HashMap::new(),
         };
         create_provider_record(&store, provider).await.unwrap();
-        let state = create_test_state(store).await;
+        let token_caches = tokio::sync::Mutex::new(HashMap::new());
 
         let (env, _metadata) =
-            resolve_provider_environment(state, &["test-provider".to_string()], None)
+            resolve_provider_environment(&store, &token_caches, &["test-provider".to_string()], None)
                 .await
                 .unwrap();
         assert_eq!(env.get("VALID_KEY"), Some(&"value".to_string()));
@@ -5188,10 +5159,11 @@ mod tests {
         )
         .await
         .unwrap();
-        let state = create_test_state(store).await;
+        let token_caches = tokio::sync::Mutex::new(HashMap::new());
 
         let (env, _metadata) = resolve_provider_environment(
-            state,
+            &store,
+            &token_caches,
             &["claude-local".to_string(), "gitlab-local".to_string()],
             None,
         )
@@ -5233,10 +5205,11 @@ mod tests {
         )
         .await
         .unwrap();
-        let state = create_test_state(store).await;
+        let token_caches = tokio::sync::Mutex::new(HashMap::new());
 
         let (env, _metadata) = resolve_provider_environment(
-            state,
+            &store,
+            &token_caches,
             &["provider-a".to_string(), "provider-b".to_string()],
             None,
         )
@@ -5293,8 +5266,8 @@ mod tests {
             .unwrap()
             .unwrap();
         let spec = loaded.spec.unwrap();
-        let state = create_test_state(store).await;
-        let (env, _metadata) = resolve_provider_environment(state, &spec.providers, None)
+        let token_caches = tokio::sync::Mutex::new(HashMap::new());
+        let (env, _metadata) = resolve_provider_environment(&store, &token_caches, &spec.providers, None)
             .await
             .unwrap();
 
@@ -5325,8 +5298,8 @@ mod tests {
             .unwrap()
             .unwrap();
         let spec = loaded.spec.unwrap();
-        let state = create_test_state(store).await;
-        let (env, metadata) = resolve_provider_environment(state, &spec.providers, None)
+        let token_caches = tokio::sync::Mutex::new(HashMap::new());
+        let (env, metadata) = resolve_provider_environment(&store, &token_caches, &spec.providers, None)
             .await
             .unwrap();
 
