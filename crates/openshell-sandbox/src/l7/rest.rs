@@ -12,7 +12,7 @@ use crate::secrets::rewrite_http_header_block;
 use miette::{IntoDiagnostic, Result, miette};
 use std::collections::HashMap;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 const MAX_HEADER_BYTES: usize = 16384; // 16 KiB for HTTP headers
 const RELAY_BUF_SIZE: usize = 8192;
@@ -252,7 +252,103 @@ where
     C: AsyncRead + AsyncWrite + Unpin,
     U: AsyncRead + AsyncWrite + Unpin,
 {
-    relay_http_request_with_resolver(req, client, upstream, None).await
+    relay_http_request_with_resolver(req, client, upstream, None, None).await
+}
+
+/// Get OAuth access token from environment or resolver.
+///
+/// Returns `None` if the token is not found, which will be logged as a warning
+/// by the caller to help debug OAuth configuration issues.
+fn get_oauth_access_token(
+    token_env_var: &str,
+    resolver: Option<&crate::secrets::SecretResolver>,
+) -> Option<String> {
+    // Try environment variable first
+    if let Ok(token) = std::env::var(token_env_var) {
+        return Some(token.trim().to_string()); // Strip whitespace/newlines
+    }
+
+    // Try resolver with placeholder
+    if let Some(resolver) = resolver {
+        let placeholder = format!("openshell:resolve:env:{}", token_env_var);
+        if let Some(token) = resolver.resolve_placeholder(&placeholder) {
+            return Some(token.trim().to_string()); // Strip whitespace/newlines
+        }
+    }
+
+    None
+}
+
+/// Inject or replace Authorization header in HTTP request using OAuth config
+fn inject_oauth_header(
+    raw: &[u8],
+    resolver: Option<&crate::secrets::SecretResolver>,
+    oauth_config: &crate::l7::OAuthConfig,
+) -> Result<crate::secrets::RewriteResult, crate::secrets::UnresolvedPlaceholderError> {
+    use crate::secrets::{RewriteResult, rewrite_http_header_block};
+
+    // Get the access token
+    let Some(access_token) = get_oauth_access_token(&oauth_config.token_env_var, resolver) else {
+        // No token available - log warning to help debug OAuth configuration issues
+        warn!(
+            token_env_var = %oauth_config.token_env_var,
+            "OAuth token not found in environment or resolver. Check that the token_env_var \
+             in the sandbox policy matches the credential key from the provider. Falling back \
+             to standard credential rewriting."
+        );
+        return rewrite_http_header_block(raw, resolver);
+    };
+
+    info!(
+        token_env_var = %oauth_config.token_env_var,
+        "Injecting OAuth access token into Authorization header"
+    );
+
+    let header_end = raw
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .map(|p| p + 4)
+        .unwrap_or(raw.len());
+
+    let header_str = String::from_utf8_lossy(&raw[..header_end]);
+    let mut lines: Vec<&str> = header_str.split("\r\n").collect();
+
+    // Find and remove existing Authorization header
+    lines.retain(|line| !line.to_ascii_lowercase().starts_with("authorization:"));
+
+    let mut output = Vec::with_capacity(raw.len() + 100);
+
+    // Write request line
+    if let Some(request_line) = lines.first() {
+        output.extend_from_slice(request_line.as_bytes());
+        output.extend_from_slice(b"\r\n");
+    }
+
+    // Write Authorization header using the template from config
+    let header_value = oauth_config.header_format.replace("{token}", &access_token);
+    let auth_header = format!("Authorization: {}", header_value);
+    output.extend_from_slice(auth_header.as_bytes());
+    output.extend_from_slice(b"\r\n");
+
+    // Write remaining headers (skip first line which is request line, skip empty lines at end)
+    for line in lines.iter().skip(1) {
+        if line.is_empty() {
+            break;
+        }
+        output.extend_from_slice(line.as_bytes());
+        output.extend_from_slice(b"\r\n");
+    }
+
+    // End headers
+    output.extend_from_slice(b"\r\n");
+
+    // Copy body
+    output.extend_from_slice(&raw[header_end..]);
+
+    Ok(RewriteResult {
+        rewritten: output,
+        redacted_target: None,
+    })
 }
 
 pub(crate) async fn relay_http_request_with_resolver<C, U>(
@@ -260,20 +356,58 @@ pub(crate) async fn relay_http_request_with_resolver<C, U>(
     client: &mut C,
     upstream: &mut U,
     resolver: Option<&crate::secrets::SecretResolver>,
+    oauth_config: Option<&crate::l7::OAuthConfig>,
 ) -> Result<RelayOutcome>
 where
     C: AsyncRead + AsyncWrite + Unpin,
     U: AsyncRead + AsyncWrite + Unpin,
 {
+    // Provider-specific request interception (Vertex AI OAuth workaround)
+    //
+    // Check if this request should be intercepted by a provider-specific handler.
+    // Currently only used by Vertex AI to intercept OAuth token exchange for
+    // Claude CLI compatibility. See `providers::vertex` module for details.
+    if req.action == "POST" && req.target == "/token" {
+        let header_str = String::from_utf8_lossy(&req.raw_header);
+        if let Some(host_line) = header_str
+            .lines()
+            .find(|line| line.to_ascii_lowercase().starts_with("host:"))
+        {
+            let host = host_line.split_once(':').map_or("", |(_, h)| h.trim());
+
+            // Check if Vertex provider should intercept this request
+            if crate::providers::vertex::should_intercept_oauth_request(
+                &req.action,
+                host,
+                &req.target,
+            ) {
+                crate::providers::vertex::log_oauth_interception("L7/TLS-terminated");
+                let response = crate::providers::vertex::generate_fake_oauth_response(None);
+
+                client.write_all(&response).await.into_diagnostic()?;
+                client.flush().await.into_diagnostic()?;
+                return Ok(RelayOutcome::Consumed);
+            }
+        }
+    }
     let header_end = req
         .raw_header
         .windows(4)
         .position(|w| w == b"\r\n\r\n")
         .map_or(req.raw_header.len(), |p| p + 4);
 
-    let rewrite_result = rewrite_http_header_block(&req.raw_header[..header_end], resolver)
-        .map_err(|e| miette!("credential injection failed: {e}"))?;
+    // Inject OAuth header if configured for this endpoint
+    let rewrite_result = if let Some(oauth_cfg) = oauth_config {
+        // For OAuth-configured endpoints, inject/replace Authorization header
+        inject_oauth_header(&req.raw_header[..header_end], resolver, oauth_cfg)
+            .map_err(|e| miette!("OAuth header injection failed: {e}"))?
+    } else {
+        // For other requests, use standard credential rewriting
+        rewrite_http_header_block(&req.raw_header[..header_end], resolver)
+            .map_err(|e| miette!("credential injection failed: {e}"))?
+    };
 
+    // Rest of the function remains the same...
     upstream
         .write_all(&rewrite_result.rewritten)
         .await
@@ -309,12 +443,9 @@ where
     if matches!(outcome, RelayOutcome::Upgraded { .. }) {
         let header_str = String::from_utf8_lossy(&req.raw_header[..header_end]);
         if !client_requested_upgrade(&header_str) {
-            warn!(
-                method = %req.action,
-                target = %req.target,
-                "upstream sent unsolicited 101 without client Upgrade request — closing connection"
-            );
-            return Ok(RelayOutcome::Consumed);
+            return Err(miette!(
+                "upstream sent unsolicited 101 without client Upgrade request"
+            ));
         }
     }
 
@@ -559,6 +690,7 @@ fn find_crlf(buf: &[u8], start: usize) -> Option<usize> {
 ///
 /// Note: callers that receive `Upgraded` are responsible for switching to
 /// raw bidirectional relay and forwarding the overflow bytes.
+#[allow(dead_code)]
 pub(crate) async fn relay_response_to_client<U, C>(
     upstream: &mut U,
     client: &mut C,
@@ -1606,15 +1738,21 @@ mod tests {
                 &mut proxy_to_client,
                 &mut proxy_to_upstream,
                 None,
+                None,
             ),
         )
         .await
         .expect("relay must not deadlock");
 
-        let outcome = result.expect("relay should succeed");
+        // Unsolicited 101 upgrade should return an error
         assert!(
-            matches!(outcome, RelayOutcome::Consumed),
-            "unsolicited 101 should be rejected as Consumed, got {outcome:?}"
+            result.is_err(),
+            "unsolicited 101 should be rejected with an error"
+        );
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("unsolicited 101"),
+            "error message should mention unsolicited 101, got: {err_msg}"
         );
 
         upstream_task.await.expect("upstream task should complete");
@@ -1662,6 +1800,7 @@ mod tests {
                 &req,
                 &mut proxy_to_client,
                 &mut proxy_to_upstream,
+                None,
                 None,
             ),
         )
@@ -1788,6 +1927,7 @@ mod tests {
                 &mut proxy_to_client,
                 &mut proxy_to_upstream,
                 resolver.as_ref(),
+                None,
             ),
         )
         .await
@@ -1871,6 +2011,7 @@ mod tests {
                 &req,
                 &mut proxy_to_client,
                 &mut proxy_to_upstream,
+                None,
                 None, // <-- No resolver, as in the L4 raw tunnel path
             ),
         )
@@ -1960,6 +2101,7 @@ mod tests {
                 &mut proxy_to_client,
                 &mut proxy_to_upstream,
                 resolver,
+                None,
             ),
         )
         .await

@@ -28,6 +28,9 @@ log_duration() {
 	echo "${label} took $((end - start))s"
 }
 
+# shellcheck source=lib/common.sh
+source "$(dirname "$0")/lib/common.sh"
+
 if ! $CONTAINER_RUNTIME ps -q --filter "name=^${CONTAINER_NAME}$" --filter "health=healthy" | grep -q .; then
 	echo "Error: Cluster container '${CONTAINER_NAME}' is not running or not healthy."
 	echo "Start the cluster first with: mise run cluster"
@@ -86,7 +89,7 @@ fi
 
 declare -a changed_files=()
 detect_start=$(date +%s)
-mapfile -t changed_files < <(
+read_lines_into_array changed_files < <(
 	{
 		git diff --name-only
 		git diff --name-only --cached

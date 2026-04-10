@@ -27,8 +27,59 @@ fi
 
 if [[ "${CONTAINER_RUNTIME}" == "podman" ]]; then
 	echo "Using Podman for multi-arch build (podman manifest)"
+	echo "Note: Podman builds platforms sequentially (slower than Docker buildx)"
 	export DOCKER_BUILDER=""
+
+	# Podman implements multi-arch via explicit manifest creation + per-platform
+	# builds. Cannot use docker-build-image.sh here because it builds single
+	# images, not manifests. Docker buildx handles multi-arch internally, so the
+	# Docker path below can delegate to docker-build-image.sh.
+	IFS=',' read -ra PLATFORM_ARRAY <<< "${PLATFORMS}"
+
+	for component in gateway cluster; do
+		full_image="${REGISTRY}/${component}"
+		echo ""
+		echo "=== Building multi-arch ${component} image ==="
+
+		# Create manifest list
+		podman manifest rm "${full_image}:${IMAGE_TAG}" 2>/dev/null || true
+		podman manifest create "${full_image}:${IMAGE_TAG}"
+
+		# Build for each platform
+		for platform in "${PLATFORM_ARRAY[@]}"; do
+			arch="${platform##*/}"
+			case "${arch}" in
+				amd64) target_arch="amd64" ;;
+				arm64) target_arch="arm64" ;;
+				*) echo "Unsupported arch: ${arch}" >&2; exit 1 ;;
+			esac
+
+			echo "Building ${component} for ${platform}..."
+
+			# Package Helm chart for cluster builds
+			if [[ "${component}" == "cluster" ]]; then
+				mkdir -p deploy/docker/.build/charts
+				helm package deploy/helm/openshell -d deploy/docker/.build/charts/ >/dev/null
+			fi
+
+			# Build with explicit TARGETARCH/BUILDARCH to avoid cross-compilation
+			# (QEMU emulation handles running the different architecture)
+			podman build --platform "${platform}" \
+				--build-arg TARGETARCH="${target_arch}" \
+				--build-arg BUILDARCH="${target_arch}" \
+				--manifest "${full_image}:${IMAGE_TAG}" \
+				-f deploy/docker/Dockerfile.images \
+				--target "${component}" \
+				.
+		done
+
+		# Push manifest
+		echo "Pushing ${full_image}:${IMAGE_TAG}..."
+		podman manifest push "${full_image}:${IMAGE_TAG}" \
+			"docker://${full_image}:${IMAGE_TAG}"
+	done
 else
+	# Docker: use buildx
 	BUILDER_NAME=${DOCKER_BUILDER:-multiarch}
 	if docker buildx inspect "${BUILDER_NAME}" >/dev/null 2>&1; then
 		echo "Using existing buildx builder: ${BUILDER_NAME}"
@@ -38,19 +89,21 @@ else
 		docker buildx create --name "${BUILDER_NAME}" --use --bootstrap
 	fi
 	export DOCKER_BUILDER="${BUILDER_NAME}"
+	export DOCKER_PLATFORM="${PLATFORMS}"
+	export DOCKER_PUSH=1
+	export IMAGE_REGISTRY="${REGISTRY}"
+
+	echo "Building multi-arch gateway image..."
+	tasks/scripts/docker-build-image.sh gateway
+
+	echo
+	echo "Building multi-arch cluster image..."
+	tasks/scripts/docker-build-image.sh cluster
 fi
-export DOCKER_PLATFORM="${PLATFORMS}"
-export DOCKER_PUSH=1
-export IMAGE_REGISTRY="${REGISTRY}"
 
-echo "Building multi-arch gateway image..."
-tasks/scripts/docker-build-image.sh gateway
-
-echo
-echo "Building multi-arch cluster image..."
-tasks/scripts/docker-build-image.sh cluster
-
-TAGS_TO_APPLY=("${EXTRA_TAGS[@]}")
+# Build list of additional tags to apply (beyond IMAGE_TAG which is already set).
+# Combines EXTRA_TAGS with optional "latest" tag without modifying EXTRA_TAGS.
+TAGS_TO_APPLY=(${EXTRA_TAGS[@]+"${EXTRA_TAGS[@]}"})
 if [[ "${TAG_LATEST}" == "true" ]]; then
 	TAGS_TO_APPLY+=("latest")
 fi
@@ -58,7 +111,7 @@ fi
 if [[ ${#TAGS_TO_APPLY[@]} -gt 0 ]]; then
 	for component in gateway cluster; do
 		full_image="${REGISTRY}/${component}"
-		for tag in "${TAGS_TO_APPLY[@]}"; do
+		for tag in ${TAGS_TO_APPLY[@]+"${TAGS_TO_APPLY[@]}"}; do
 			[[ "${tag}" == "${IMAGE_TAG}" ]] && continue
 			echo "Tagging ${full_image}:${tag}..."
 			if [[ "${CONTAINER_RUNTIME}" == "podman" ]]; then

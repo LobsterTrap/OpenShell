@@ -100,6 +100,30 @@ This reads `ANTHROPIC_API_KEY` from your environment.
 
 ::::
 
+::::{tab-item} Google Cloud Vertex AI
+
+```console
+$ export ANTHROPIC_VERTEX_PROJECT_ID=your-gcp-project-id
+$ export ANTHROPIC_VERTEX_REGION=us-east5  # Optional, defaults to us-central1
+$ openshell provider create --name vertex --type vertex --from-existing
+```
+
+This reads `ANTHROPIC_VERTEX_PROJECT_ID` and `ANTHROPIC_VERTEX_REGION` from your environment and automatically generates OAuth tokens from GCP Application Default Credentials.
+
+**Prerequisites:**
+- Google Cloud project with Vertex AI API enabled and Claude models available
+- Application Default Credentials configured: `gcloud auth application-default login`
+- The `~/.config/gcloud/` directory must be uploaded to sandboxes for OAuth token refresh
+
+**Usage:**
+- **Direct API calls:** Tools like `claude` CLI automatically use Vertex AI when `CLAUDE_CODE_USE_VERTEX=1` is set
+- **Inference routing:** Configure `inference.local` to proxy requests to Vertex AI (see "Set Inference Routing" section below)
+
+**Model ID Format:** Use `@` separator for versions (e.g., `claude-sonnet-4-5@20250929`)
+
+::::
+
+
 :::::
 
 ## Set Inference Routing

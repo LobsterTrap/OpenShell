@@ -53,12 +53,23 @@ pub enum EnforcementMode {
     Enforce,
 }
 
+/// OAuth header injection configuration
+#[derive(Debug, Clone)]
+pub struct OAuthConfig {
+    /// Environment variable name containing the OAuth token
+    pub token_env_var: String,
+    /// Header value format template (use {token} as placeholder)
+    /// Default: "Bearer {token}"
+    pub header_format: String,
+}
+
 /// L7 configuration for an endpoint, extracted from policy data.
 #[derive(Debug, Clone)]
 pub struct L7EndpointConfig {
     pub protocol: L7Protocol,
     pub tls: TlsMode,
     pub enforcement: EnforcementMode,
+    pub oauth: Option<OAuthConfig>,
 }
 
 /// Result of an L7 policy decision for a single request.
@@ -112,10 +123,26 @@ pub fn parse_l7_config(val: &regorus::Value) -> Option<L7EndpointConfig> {
         _ => EnforcementMode::Audit,
     };
 
+    // Parse OAuth configuration if present
+    let oauth = match get_object_field(val, "oauth") {
+        Some(oauth_val) => {
+            let token_env_var = get_object_str(oauth_val, "token_env_var")?;
+            let header_format = get_object_str(oauth_val, "header_format")
+                .unwrap_or_else(|| "Bearer {token}".to_string());
+
+            Some(OAuthConfig {
+                token_env_var,
+                header_format,
+            })
+        }
+        None => None,
+    };
+
     Some(L7EndpointConfig {
         protocol,
         tls,
         enforcement,
+        oauth,
     })
 }
 
@@ -132,6 +159,14 @@ pub fn parse_tls_mode(val: &regorus::Value) -> TlsMode {
 }
 
 /// Extract a string value from a regorus object.
+fn get_object_field<'a>(val: &'a regorus::Value, key: &str) -> Option<&'a regorus::Value> {
+    let key_val = regorus::Value::String(key.into());
+    match val {
+        regorus::Value::Object(map) => map.get(&key_val),
+        _ => None,
+    }
+}
+
 fn get_object_str(val: &regorus::Value, key: &str) -> Option<String> {
     let key_val = regorus::Value::String(key.into());
     match val {

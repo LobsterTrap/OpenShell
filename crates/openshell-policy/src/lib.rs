@@ -16,7 +16,8 @@ use std::path::Path;
 use miette::{IntoDiagnostic, Result, WrapErr};
 use openshell_core::proto::{
     FilesystemPolicy, L7Allow, L7QueryMatcher, L7Rule, LandlockPolicy, NetworkBinary,
-    NetworkEndpoint, NetworkPolicyRule, ProcessPolicy, SandboxPolicy,
+    NetworkEndpoint, NetworkPolicyRule, OAuthCredentialsPolicy, OAuthInjectionConfig,
+    ProcessPolicy, SandboxPolicy,
 };
 use serde::{Deserialize, Serialize};
 
@@ -36,6 +37,8 @@ struct PolicyFile {
     process: Option<ProcessDef>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     network_policies: BTreeMap<String, NetworkPolicyRuleDef>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    oauth_credentials: Option<OAuthCredentialsDef>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -63,6 +66,25 @@ struct ProcessDef {
     run_as_user: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     run_as_group: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OAuthCredentialsDef {
+    #[serde(default)]
+    auto_refresh: bool,
+    #[serde(default, skip_serializing_if = "is_zero_i64")]
+    refresh_margin_seconds: i64,
+    #[serde(default, skip_serializing_if = "is_zero_i64")]
+    max_lifetime_seconds: i64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OAuthInjectionConfigDef {
+    token_env_var: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    header_format: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -100,9 +122,15 @@ struct NetworkEndpointDef {
     rules: Vec<L7RuleDef>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     allowed_ips: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    oauth: Option<OAuthInjectionConfigDef>,
 }
 
 fn is_zero(v: &u16) -> bool {
+    *v == 0
+}
+
+fn is_zero_i64(v: &i64) -> bool {
     *v == 0
 }
 
@@ -185,6 +213,14 @@ fn to_proto(raw: PolicyFile) -> SandboxPolicy {
                             tls: e.tls,
                             enforcement: e.enforcement,
                             access: e.access,
+                            oauth: e.oauth.map(|oauth| OAuthInjectionConfig {
+                                token_env_var: oauth.token_env_var,
+                                header_format: if oauth.header_format.is_empty() {
+                                    "Bearer {token}".to_string()
+                                } else {
+                                    oauth.header_format
+                                },
+                            }),
                             rules: e
                                 .rules
                                 .into_iter()
@@ -245,6 +281,11 @@ fn to_proto(raw: PolicyFile) -> SandboxPolicy {
             run_as_group: p.run_as_group,
         }),
         network_policies,
+        oauth_credentials: raw.oauth_credentials.map(|oauth| OAuthCredentialsPolicy {
+            auto_refresh: oauth.auto_refresh,
+            refresh_margin_seconds: oauth.refresh_margin_seconds,
+            max_lifetime_seconds: oauth.max_lifetime_seconds,
+        }),
     }
 }
 
@@ -330,6 +371,10 @@ fn from_proto(policy: &SandboxPolicy) -> PolicyFile {
                                 })
                                 .collect(),
                             allowed_ips: e.allowed_ips.clone(),
+                            oauth: e.oauth.as_ref().map(|oauth| OAuthInjectionConfigDef {
+                                token_env_var: oauth.token_env_var.clone(),
+                                header_format: oauth.header_format.clone(),
+                            }),
                         }
                     })
                     .collect(),
@@ -346,12 +391,28 @@ fn from_proto(policy: &SandboxPolicy) -> PolicyFile {
         })
         .collect();
 
+    let oauth_credentials = policy.oauth_credentials.as_ref().and_then(|oauth| {
+        if !oauth.auto_refresh
+            && oauth.refresh_margin_seconds == 0
+            && oauth.max_lifetime_seconds == 0
+        {
+            None
+        } else {
+            Some(OAuthCredentialsDef {
+                auto_refresh: oauth.auto_refresh,
+                refresh_margin_seconds: oauth.refresh_margin_seconds,
+                max_lifetime_seconds: oauth.max_lifetime_seconds,
+            })
+        }
+    });
+
     PolicyFile {
         version: policy.version,
         filesystem_policy,
         landlock,
         process,
         network_policies,
+        oauth_credentials,
     }
 }
 
@@ -448,6 +509,7 @@ pub fn restrictive_default_policy() -> SandboxPolicy {
             run_as_group: "sandbox".into(),
         }),
         network_policies: HashMap::new(),
+        oauth_credentials: None,
     }
 }
 
@@ -1009,6 +1071,7 @@ network_policies:
             filesystem: None,
             landlock: None,
             network_policies: HashMap::new(),
+            oauth_credentials: None,
         };
         assert!(validate_sandbox_policy(&policy).is_ok());
     }
@@ -1225,5 +1288,102 @@ network_policies:
             parse_sandbox_policy(yaml).is_err(),
             "port >65535 should fail to parse"
         );
+    }
+}
+
+#[test]
+fn parse_oauth_injection_config() {
+    let yaml = r#"
+version: 1
+network_policies:
+  test:
+    name: test-oauth
+    endpoints:
+      - host: api.example.com
+        port: 443
+        protocol: rest
+        oauth:
+          token_env_var: TEST_ACCESS_TOKEN
+          header_format: "Bearer {token}"
+    binaries:
+      - path: /usr/bin/curl
+"#;
+    let policy = parse_sandbox_policy(yaml).expect("parse failed");
+    let rule = policy
+        .network_policies
+        .get("test")
+        .expect("policy not found");
+    let endpoint = rule.endpoints.first().expect("no endpoints");
+    let oauth = endpoint.oauth.as_ref().expect("no oauth config");
+
+    assert_eq!(oauth.token_env_var, "TEST_ACCESS_TOKEN");
+    assert_eq!(oauth.header_format, "Bearer {token}");
+}
+
+#[test]
+fn round_trip_oauth_injection_config() {
+    let yaml = r#"
+version: 1
+network_policies:
+  test:
+    name: test-oauth
+    endpoints:
+      - host: api.example.com
+        port: 443
+        protocol: rest
+        oauth:
+          token_env_var: MY_TOKEN
+          header_format: "Bearer {token}"
+    binaries:
+      - path: /usr/bin/curl
+"#;
+    let proto1 = parse_sandbox_policy(yaml).expect("parse failed");
+    let yaml_out = serialize_sandbox_policy(&proto1).expect("serialize failed");
+    let proto2 = parse_sandbox_policy(&yaml_out).expect("re-parse failed");
+
+    let oauth1 = proto1.network_policies["test"].endpoints[0]
+        .oauth
+        .as_ref()
+        .unwrap();
+    let oauth2 = proto2.network_policies["test"].endpoints[0]
+        .oauth
+        .as_ref()
+        .unwrap();
+
+    assert_eq!(oauth1.token_env_var, oauth2.token_env_var);
+    assert_eq!(oauth1.header_format, oauth2.header_format);
+}
+
+#[test]
+fn parse_vertex_example_policy() {
+    let yaml = std::fs::read_to_string("../../examples/vertex-ai/sandbox-policy.yaml")
+        .expect("failed to read example policy");
+    let policy = parse_sandbox_policy(&yaml).expect("parse failed");
+
+    let rule = policy
+        .network_policies
+        .get("google_vertex")
+        .expect("google_vertex policy not found");
+    assert!(!rule.endpoints.is_empty(), "should have endpoints");
+
+    // Check that aiplatform.googleapis.com endpoints have OAuth config
+    let vertex_endpoints: Vec<_> = rule
+        .endpoints
+        .iter()
+        .filter(|e| e.host.contains("aiplatform.googleapis.com"))
+        .collect();
+
+    assert!(
+        !vertex_endpoints.is_empty(),
+        "should have aiplatform endpoints"
+    );
+
+    for endpoint in vertex_endpoints {
+        let oauth = endpoint
+            .oauth
+            .as_ref()
+            .expect("aiplatform endpoint should have OAuth config");
+        assert_eq!(oauth.token_env_var, "VERTEX_ACCESS_TOKEN");
+        assert_eq!(oauth.header_format, "Bearer {token}");
     }
 }

@@ -179,6 +179,7 @@ The following provider types are supported.
 | `nvidia` | `NVIDIA_API_KEY` | NVIDIA API Catalog |
 | `openai` | `OPENAI_API_KEY` | Any OpenAI-compatible endpoint. Set `--config OPENAI_BASE_URL` to point to the provider. Refer to {doc}`/inference/configure`. |
 | `opencode` | `OPENCODE_API_KEY`, `OPENROUTER_API_KEY`, `OPENAI_API_KEY` | opencode tool |
+| `vertex` | `ANTHROPIC_VERTEX_PROJECT_ID`, `VERTEX_OAUTH_TOKEN`, `CLAUDE_CODE_USE_VERTEX` | Google Cloud Vertex AI with Claude models. Automatically generates OAuth tokens from GCP Application Default Credentials. Set `ANTHROPIC_VERTEX_REGION` (optional, defaults to `us-central1`) to control the region. |
 
 :::{tip}
 Use the `generic` type for any service not listed above. You define the
@@ -193,6 +194,7 @@ The following providers have been tested with `inference.local`. Any provider th
 |---|---|---|---|---|
 | NVIDIA API Catalog | `nvidia-prod` | `nvidia` | `https://integrate.api.nvidia.com/v1` | `NVIDIA_API_KEY` |
 | Anthropic | `anthropic-prod` | `anthropic` | `https://api.anthropic.com` | `ANTHROPIC_API_KEY` |
+| Google Vertex AI | `vertex` | `vertex` | Auto-configured per region | `ANTHROPIC_VERTEX_PROJECT_ID` (OAuth auto-generated) |
 | Baseten | `baseten` | `openai` | `https://inference.baseten.co/v1` | `OPENAI_API_KEY` |
 | Bitdeer AI | `bitdeer` | `openai` | `https://api-inference.bitdeer.ai/v1` | `OPENAI_API_KEY` |
 | Deepinfra | `deepinfra` | `openai` | `https://api.deepinfra.com/v1/openai` | `OPENAI_API_KEY` |

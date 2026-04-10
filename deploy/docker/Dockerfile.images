@@ -86,10 +86,14 @@ RUN mkdir -p \
 
 FROM rust-builder-skeleton AS rust-deps
 
+# NOTE: cargo-target and sccache cache mounts are disabled because BuildKit
+# persists them across all cleanup operations (docker system prune, mise clean, etc.),
+# causing stale builds where code changes don't appear in compiled binaries.
+# Removing these mounts ensures clean rebuilds at the cost of slower build times.
+# --mount=type=cache,id=cargo-target-${TARGETARCH}-${CARGO_TARGET_CACHE_SCOPE},sharing=locked,target=/build/target \
+# --mount=type=cache,id=sccache-${TARGETARCH},sharing=locked,target=/tmp/sccache \
 RUN --mount=type=cache,id=cargo-registry-${TARGETARCH},sharing=locked,target=/usr/local/cargo/registry \
     --mount=type=cache,id=cargo-git-${TARGETARCH},sharing=locked,target=/usr/local/cargo/git \
-    --mount=type=cache,id=cargo-target-${TARGETARCH}-${CARGO_TARGET_CACHE_SCOPE},sharing=locked,target=/build/target \
-    --mount=type=cache,id=sccache-${TARGETARCH},sharing=locked,target=/tmp/sccache \
     . cross-build.sh && cargo_cross_build --release -p openshell-server -p openshell-sandbox
 
 # ---------------------------------------------------------------------------
@@ -151,10 +155,14 @@ FROM supervisor-workspace AS supervisor-builder
 ARG CARGO_CODEGEN_UNITS
 ARG EXTRA_CARGO_FEATURES=""
 
+# NOTE: cargo-target and sccache cache mounts are disabled because BuildKit
+# persists them across all cleanup operations (docker system prune, mise clean, etc.),
+# causing stale builds where code changes don't appear in compiled binaries.
+# Removing these mounts ensures clean rebuilds at the cost of slower build times.
+# --mount=type=cache,id=cargo-target-${TARGETARCH}-${CARGO_TARGET_CACHE_SCOPE},sharing=locked,target=/build/target \
+# --mount=type=cache,id=sccache-${TARGETARCH},sharing=locked,target=/tmp/sccache \
 RUN --mount=type=cache,id=cargo-registry-${TARGETARCH},sharing=locked,target=/usr/local/cargo/registry \
     --mount=type=cache,id=cargo-git-${TARGETARCH},sharing=locked,target=/usr/local/cargo/git \
-    --mount=type=cache,id=cargo-target-${TARGETARCH}-${CARGO_TARGET_CACHE_SCOPE},sharing=locked,target=/build/target \
-    --mount=type=cache,id=sccache-${TARGETARCH},sharing=locked,target=/tmp/sccache \
     . cross-build.sh && \
     cargo_cross_build --release -p openshell-sandbox ${EXTRA_CARGO_FEATURES:+--features "$EXTRA_CARGO_FEATURES"} && \
     mkdir -p /build/out && \
@@ -230,7 +238,7 @@ FROM quay.io/hummingbird/core-runtime:latest-builder AS cluster
 USER root
 
 RUN dnf install -y fedora-repos && \
-    dnf install -y \
+    dnf install -y --no-best --skip-broken \
     ca-certificates \
     iptables \
     nftables \

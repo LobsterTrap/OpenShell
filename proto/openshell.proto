@@ -429,10 +429,36 @@ message GetSandboxProviderEnvironmentRequest {
   string sandbox_id = 1;
 }
 
+// Metadata for OAuth credentials with auto-refresh support.
+message OAuthCredentialMetadata {
+  // Token expiry time in seconds (from OAuth response).
+  // Example: 3600 for 1-hour tokens.
+  int64 expires_in = 1;
+
+  // Whether auto-refresh is enabled for this credential.
+  // Default: false (tokens expire after expires_in, sandbox limited to 1 hour).
+  bool auto_refresh = 2;
+
+  // Seconds before expiry to trigger refresh (default: 300 = 5 minutes).
+  // Only used when auto_refresh = true.
+  int64 refresh_margin_seconds = 3;
+
+  // Maximum sandbox lifetime in seconds when auto_refresh is enabled.
+  // -1 = infinite (use with caution!)
+  // 0 or unspecified = default (86400 = 24 hours)
+  // >0 = custom limit in seconds
+  int64 max_lifetime_seconds = 4;
+}
+
 // Get sandbox provider environment response.
 message GetSandboxProviderEnvironmentResponse {
   // Provider credential environment variables.
   map<string, string> environment = 1;
+
+  // Metadata for OAuth credentials (token expiry, auto-refresh config).
+  // Key matches credential key in environment (e.g., "VERTEX_ADC").
+  // Only present for OAuth providers that support token auto-refresh.
+  map<string, OAuthCredentialMetadata> oauth_metadata = 2;
 }
 
 // ---------------------------------------------------------------------------
