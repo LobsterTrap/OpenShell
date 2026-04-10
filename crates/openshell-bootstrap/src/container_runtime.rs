@@ -203,6 +203,16 @@ fn podman_rootless_socket_path() -> Option<String> {
     Some(format!("{runtime_dir}/podman/podman.sock"))
 }
 
+/// Check whether the current process is running as a non-root user.
+///
+/// Returns `true` when the effective UID is non-zero (rootless mode).
+/// Used to decide container configuration — for example, rootless Podman
+/// needs a private cgroup namespace while rootful Podman (and Docker) can
+/// use the host cgroup namespace.
+pub(crate) fn is_rootless() -> bool {
+    current_uid().map_or(false, |uid| uid != 0)
+}
+
 /// Get the current user's UID by reading `/proc/self/status`.
 ///
 /// Returns `None` on non-Linux systems or if the file cannot be parsed.
@@ -218,7 +228,7 @@ fn current_uid() -> Option<u32> {
 }
 
 /// Check whether a binary is on PATH.
-fn has_binary(name: &str) -> bool {
+pub(crate) fn has_binary(name: &str) -> bool {
     std::process::Command::new(name)
         .arg("--version")
         .stdout(std::process::Stdio::null())

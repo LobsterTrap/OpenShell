@@ -53,6 +53,17 @@ If you prefer [uv](https://docs.astral.sh/uv/):
 $ uv tool install -U openshell
 ```
 
+On Fedora (43+) or CentOS Stream / RHEL (10+), install from the [COPR repository](https://copr.fedorainfracloud.org/coprs/maxamillion/openshell/):
+
+```console
+$ sudo dnf copr enable maxamillion/openshell
+$ sudo dnf install openshell
+```
+
+:::{note}
+The RPM ships an `/etc/modules-load.d/openshell.conf` file that loads legacy iptables kernel modules required by the gateway cluster. On a fresh install, reboot or run `sudo modprobe ip_tables iptable_nat iptable_filter iptable_mangle` before starting the gateway.
+:::
+
 After installing the CLI, run `openshell --help` in your terminal to see the full CLI reference, including all commands and flags.
 
 :::{tip}

@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 use crate::RemoteOptions;
-use crate::constants::{container_name, network_name, volume_name};
+use crate::constants::{container_name, network_name, node_name, volume_name};
 use crate::container_runtime::{
     ALL_HOST_GATEWAY_ALIASES, ContainerRuntime, DOCKER_HOST_GATEWAY_ALIAS,
     PODMAN_HOST_GATEWAY_ALIAS, find_all_sockets,
@@ -263,6 +263,33 @@ pub(crate) fn connect_local(runtime: ContainerRuntime) -> Result<Docker> {
     }
 }
 
+/// Connect to the local container runtime with auto-detection.
+///
+/// This is a convenience wrapper for code paths that need a Docker client
+/// but don't have a `ContainerRuntime` value available. It auto-detects
+/// the runtime (Podman preferred) and connects via `connect_local`.
+pub(crate) fn connect_local_auto() -> Result<Docker> {
+    let runtime = crate::container_runtime::detect_runtime(None)?;
+    connect_local(runtime)
+}
+
+/// Connect to the local container runtime for an existing gateway.
+///
+/// Resolution order:
+/// 1. Stored runtime from gateway metadata (if metadata exists)
+/// 2. Auto-detect runtime via `detect_runtime` (propagates error on failure)
+///
+/// This is used by code paths that have a gateway `name` but no `runtime`
+/// in scope. Unlike `connect_local_auto()`, this checks metadata first so
+/// that gateways deployed with a specific runtime reconnect to the same one.
+pub(crate) fn connect_for_gateway(name: &str) -> Result<Docker> {
+    let runtime = match crate::metadata::get_gateway_metadata(name) {
+        Some(m) => m.container_runtime,
+        None => crate::container_runtime::detect_runtime(None)?,
+    };
+    connect_local(runtime)
+}
+
 /// Build a rich, user-friendly error when a container runtime is not reachable.
 fn runtime_not_reachable_error(
     runtime: ContainerRuntime,
@@ -288,11 +315,36 @@ fn runtime_not_reachable_error(
                 "No container runtime socket found and {} is not set.",
                 host_env
             ));
-            hints.push(format!(
-                "Install and start {}. See the support matrix \
-                 in the OpenShell docs for tested configurations.",
-                runtime.display_name()
-            ));
+            // Check if the binary is installed but the socket is missing —
+            // this typically means the systemd socket unit needs activation.
+            if crate::container_runtime::has_binary(runtime.binary_name()) {
+                match runtime {
+                    ContainerRuntime::Podman => {
+                        hints.push(
+                            "Podman is installed but its API socket is not active.\n\n  \
+                             Enable the Podman socket with:\n\n    \
+                             sudo systemctl enable --now podman.socket\n\n  \
+                             For rootless Podman, run as your regular user:\n\n    \
+                             systemctl --user enable --now podman.socket"
+                                .to_string(),
+                        );
+                    }
+                    ContainerRuntime::Docker => {
+                        hints.push(
+                            "Docker is installed but its daemon is not running.\n\n  \
+                             Start Docker with:\n\n    \
+                             sudo systemctl start docker"
+                                .to_string(),
+                        );
+                    }
+                }
+            } else {
+                hints.push(format!(
+                    "Install and start {}. See the support matrix \
+                     in the OpenShell docs for tested configurations.",
+                    runtime.display_name()
+                ));
+            }
         } else {
             // Found sockets for possibly a different runtime
             let socket_list: Vec<String> = alt_sockets
@@ -555,6 +607,7 @@ pub async fn ensure_container(
     registry_token: Option<&str>,
     device_ids: &[String],
     runtime: ContainerRuntime,
+    resume: bool,
 ) -> Result<u16> {
     let container_name = container_name(name);
 
@@ -564,25 +617,34 @@ pub async fn ensure_container(
         .await
     {
         Ok(info) => {
-            // Container exists — verify it is using the expected image.
-            // Resolve the desired image ref to its content-addressable ID so we
-            // can compare against the container's image field (which Docker
-            // stores as an ID).
-            let desired_id = docker
-                .inspect_image(image_ref)
-                .await
-                .ok()
-                .and_then(|img| img.id);
+            // On resume we always reuse the existing container — the persistent
+            // volume holds k3s etcd state, and recreating the container with
+            // different env vars would cause the entrypoint to rewrite the
+            // HelmChart manifest, triggering a Helm upgrade that changes the
+            // StatefulSet image reference while the old pod still runs with the
+            // previous image.  Reusing the container avoids this entirely.
+            //
+            // On a non-resume path we check whether the image changed and
+            // recreate only when necessary.
+            let reuse = if resume {
+                true
+            } else {
+                let desired_id = docker
+                    .inspect_image(image_ref)
+                    .await
+                    .ok()
+                    .and_then(|img| img.id);
 
-            let container_image_id = info.image;
+                let container_image_id = info.image.clone();
 
-            let image_matches = match (&desired_id, &container_image_id) {
-                (Some(desired), Some(current)) => desired == current,
-                _ => false,
+                match (&desired_id, &container_image_id) {
+                    (Some(desired), Some(current)) => desired == current,
+                    _ => false,
+                }
             };
 
-            if image_matches {
-                // The container exists with the correct image, but its network
+            if reuse {
+                // The container exists and should be reused. Its network
                 // attachment may be stale. When the gateway is resumed after a
                 // container kill, `ensure_network` destroys and recreates the
                 // Docker network (giving it a new ID). The stopped container
@@ -616,8 +678,8 @@ pub async fn ensure_container(
             tracing::info!(
                 "Container {} exists but uses a different image (container={}, desired={}), recreating",
                 container_name,
-                container_image_id.as_deref().map_or("unknown", truncate_id),
-                desired_id.as_deref().map_or("unknown", truncate_id),
+                info.image.as_deref().map_or("unknown", truncate_id),
+                image_ref,
             );
 
             let _ = docker.stop_container(&container_name, None).await;
@@ -654,7 +716,11 @@ pub async fn ensure_container(
     // Rootless Podman with cgroupns=host mounts the host cgroup tree
     // read-only (user namespace restriction), so it needs a private cgroup
     // namespace where the delegated controllers are writable.
-    let cgroupns = if runtime == ContainerRuntime::Podman {
+    // Rootful Podman (uid 0) can use host cgroupns just like Docker since
+    // root has full write access to the host cgroup tree.
+    let is_rootless_podman =
+        runtime == ContainerRuntime::Podman && crate::container_runtime::is_rootless();
+    let cgroupns = if is_rootless_podman {
         HostConfigCgroupnsModeEnum::PRIVATE
     } else {
         HostConfigCgroupnsModeEnum::HOST
@@ -767,6 +833,11 @@ pub async fn ensure_container(
         format!("REGISTRY_HOST={registry_host}"),
         format!("REGISTRY_INSECURE={registry_insecure}"),
         format!("IMAGE_REPO_BASE={image_repo_base}"),
+        // Deterministic k3s node name so the node identity survives container
+        // recreation (e.g. after an image upgrade). Without this, k3s uses
+        // the container ID as the hostname/node name, which changes on every
+        // container recreate and triggers stale-node PVC cleanup.
+        format!("OPENSHELL_NODE_NAME={}", node_name(name)),
     ];
     if let Some(endpoint) = registry_endpoint {
         env_vars.push(format!("REGISTRY_ENDPOINT={endpoint}"));
@@ -832,6 +903,11 @@ pub async fn ensure_container(
         env_vars.push("GPU_ENABLED=true".to_string());
     }
 
+    // Pass the container runtime to the entrypoint so it can select the
+    // appropriate networking stack (nftables kube-proxy for Podman, iptables
+    // DNS proxy for Docker, etc.).
+    env_vars.push(format!("CONTAINER_RUNTIME={}", runtime.binary_name()));
+
     let env = Some(env_vars);
 
     // Set the health check explicitly on the container config so it works
@@ -852,6 +928,14 @@ pub async fn ensure_container(
 
     let config = ContainerCreateBody {
         image: Some(image_ref.to_string()),
+        // Set the container hostname to the deterministic node name.
+        // k3s uses the container hostname as its default node name.  Without
+        // this, Docker defaults to the container ID (first 12 hex chars),
+        // which changes on every container recreation and can cause
+        // `clean_stale_nodes` to delete the wrong node on resume.  The
+        // hostname persists across container stop/start cycles, ensuring a
+        // stable node identity.
+        hostname: Some(node_name(name)),
         cmd: Some(cmd),
         env,
         exposed_ports: Some(exposed_ports),
@@ -1446,6 +1530,43 @@ mod tests {
         assert!(
             msg.contains("podman info"),
             "should suggest 'podman info' verification"
+        );
+    }
+
+    #[test]
+    fn runtime_not_reachable_error_podman_socket_hint() {
+        // Verify that the Podman error message always contains the
+        // verification hint regardless of system state. Branch-specific
+        // assertions (socket hints, env var hints, systemctl suggestions)
+        // are avoided because other tests in this module mutate env vars
+        // concurrently, making branch selection non-deterministic.
+        //
+        // The new "binary installed but no socket" hint path is validated
+        // by code inspection: `has_binary()` is called and the Podman
+        // branch emits "systemctl enable --now podman.socket".
+        let err = runtime_not_reachable_error(
+            ContainerRuntime::Podman,
+            "no Podman socket found at standard locations",
+            "Failed to connect to Podman",
+        );
+        let msg = format!("{err:?}");
+
+        assert!(
+            msg.contains("Failed to connect to Podman"),
+            "should include the summary: {msg}"
+        );
+        assert!(
+            msg.contains("no Podman socket found"),
+            "should include the raw error detail: {msg}"
+        );
+        assert!(
+            msg.contains("podman info"),
+            "should always suggest 'podman info' verification: {msg}"
+        );
+        // The message must never be empty or missing help text
+        assert!(
+            msg.contains("help:") || msg.contains("Verify"),
+            "should include actionable help text: {msg}"
         );
     }
 

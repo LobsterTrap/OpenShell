@@ -241,6 +241,7 @@ RUN dnf install -y fedora-repos && \
     dnf install -y --no-best --skip-broken \
     ca-certificates \
     iptables \
+    nftables \
     util-linux \
     bind-utils \
     && dnf clean all

@@ -28,40 +28,40 @@ INSTALL_OUTPUT=""
 # ---------------------------------------------------------------------------
 
 pass() {
-  _PASS=$((_PASS + 1))
-  printf '  PASS: %s\n' "$1"
+	_PASS=$((_PASS + 1))
+	printf '  PASS: %s\n' "$1"
 }
 
 fail() {
-  _FAIL=$((_FAIL + 1))
-  printf '  FAIL: %s\n' "$1" >&2
-  if [ -n "${2:-}" ]; then
-    printf '        %s\n' "$2" >&2
-  fi
+	_FAIL=$((_FAIL + 1))
+	printf '  FAIL: %s\n' "$1" >&2
+	if [ -n "${2:-}" ]; then
+		printf '        %s\n' "$2" >&2
+	fi
 }
 
 assert_output_contains() {
-  _aoc_output="$1"
-  _aoc_pattern="$2"
-  _aoc_label="$3"
+	_aoc_output="$1"
+	_aoc_pattern="$2"
+	_aoc_label="$3"
 
-  if printf '%s' "$_aoc_output" | grep -qF "$_aoc_pattern"; then
-    pass "$_aoc_label"
-  else
-    fail "$_aoc_label" "expected '$_aoc_pattern' in output"
-  fi
+	if printf '%s' "$_aoc_output" | grep -qF "$_aoc_pattern"; then
+		pass "$_aoc_label"
+	else
+		fail "$_aoc_label" "expected '$_aoc_pattern' in output"
+	fi
 }
 
 assert_output_not_contains() {
-  _aonc_output="$1"
-  _aonc_pattern="$2"
-  _aonc_label="$3"
+	_aonc_output="$1"
+	_aonc_pattern="$2"
+	_aonc_label="$3"
 
-  if printf '%s' "$_aonc_output" | grep -qF "$_aonc_pattern"; then
-    fail "$_aonc_label" "unexpected '$_aonc_pattern' found in output"
-  else
-    pass "$_aonc_label"
-  fi
+	if printf '%s' "$_aonc_output" | grep -qF "$_aonc_pattern"; then
+		fail "$_aonc_label" "unexpected '$_aonc_pattern' found in output"
+	else
+		pass "$_aonc_label"
+	fi
 }
 
 # ---------------------------------------------------------------------------
@@ -78,16 +78,19 @@ assert_output_not_contains() {
 # Usage:
 #   SHELL="/bin/bash" run_install
 run_install() {
-  INSTALL_DIR="$(mktemp -d)/bin"
+	INSTALL_DIR="$(mktemp -d)/bin"
 
-  # Remove the install dir from PATH (it won't be there, but be explicit).
-  # Keep a minimal PATH so curl/tar/install are available.
-  INSTALL_OUTPUT="$(OPENSHELL_INSTALL_DIR="$INSTALL_DIR" \
-    PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
-    sh "$INSTALL_SCRIPT" 2>&1)" || {
-    printf 'install.sh failed:\n%s\n' "$INSTALL_OUTPUT" >&2
-    return 1
-  }
+	# Remove the install dir from PATH (it won't be there, but be explicit).
+	# Keep a minimal PATH so curl/tar/install are available.
+	# Use the upstream NVIDIA repo for release resolution in tests, since fork
+	# repos (e.g. LobsterTrap) may not have published releases.
+	INSTALL_OUTPUT="$(OPENSHELL_INSTALL_DIR="$INSTALL_DIR" \
+		OPENSHELL_REPO="${OPENSHELL_REPO:-NVIDIA/OpenShell}" \
+		PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
+		sh "$INSTALL_SCRIPT" 2>&1)" || {
+		printf 'install.sh failed:\n%s\n' "$INSTALL_OUTPUT" >&2
+		return 1
+	}
 }
 
 # ---------------------------------------------------------------------------
@@ -95,6 +98,6 @@ run_install() {
 # ---------------------------------------------------------------------------
 
 print_summary() {
-  printf '\n=== Results: %d passed, %d failed ===\n' "$_PASS" "$_FAIL"
-  [ "$_FAIL" -eq 0 ]
+	printf '\n=== Results: %d passed, %d failed ===\n' "$_PASS" "$_FAIL"
+	[ "$_FAIL" -eq 0 ]
 }

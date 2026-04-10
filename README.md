@@ -41,7 +41,14 @@ curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | 
 uv tool install -U openshell
 ```
 
-Both methods install the latest stable release by default. To install a specific version, set `OPENSHELL_VERSION` (binary) or pin the version with `uv tool install openshell==<version>`. A [`dev` release](https://github.com/LobsterTrap/OpenShell/releases/tag/dev) is also available that tracks the latest commit on `main`.
+**Fedora (43+) / RHEL / CentOS Stream (10+) via [COPR](https://copr.fedorainfracloud.org/coprs/maxamillion/openshell/):**
+
+```bash
+sudo dnf copr enable maxamillion/openshell
+sudo dnf install openshell
+```
+
+Both the binary and PyPI methods install the latest stable release by default. To install a specific version, set `OPENSHELL_VERSION` (binary) or pin the version with `uv tool install openshell==<version>`. A [`dev` release](https://github.com/LobsterTrap/OpenShell/releases/tag/dev) is also available that tracks the latest commit on `main`. The COPR repository tracks the `midstream` branch.
 
 ### Create a sandbox
 

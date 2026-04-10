@@ -65,7 +65,10 @@ end
 function run_install
     set -g INSTALL_DIR (mktemp -d)/bin
 
+    # Use the upstream NVIDIA repo for release resolution in tests, since fork
+    # repos (e.g. LobsterTrap) may not have published releases.
     set -g INSTALL_OUTPUT (OPENSHELL_INSTALL_DIR="$INSTALL_DIR" \
+        OPENSHELL_REPO=(set -q OPENSHELL_REPO; and echo $OPENSHELL_REPO; or echo "NVIDIA/OpenShell") \
         SHELL="/usr/bin/fish" \
         PATH="/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin" \
         sh "$INSTALL_SCRIPT" 2>&1)

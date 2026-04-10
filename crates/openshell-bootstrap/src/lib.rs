@@ -336,6 +336,7 @@ where
     //   idempotent and will reuse the volume, create a container if needed,
     //   and start it)
     let mut resume = false;
+    let mut resume_container_exists = false;
     if let Some(existing) = check_existing_gateway(&target_docker, &name).await? {
         if recreate {
             log("[status] Removing existing gateway".to_string());
@@ -343,39 +344,51 @@ where
         } else if existing.container_running {
             log("[status] Gateway is already running".to_string());
             resume = true;
+            resume_container_exists = true;
         } else {
             log("[status] Resuming gateway from existing state".to_string());
             resume = true;
+            resume_container_exists = existing.container_exists;
         }
     }
 
-    // Ensure the image is available on the target Docker daemon
-    if remote_opts.is_some() {
-        log("[status] Downloading gateway".to_string());
-        let on_log_clone = Arc::clone(&on_log);
-        let progress_cb = move |msg: String| {
-            if let Ok(mut f) = on_log_clone.lock() {
-                f(msg);
-            }
-        };
-        image::pull_remote_image(
-            &target_docker,
-            &image_ref,
-            registry_username.as_deref(),
-            registry_token.as_deref(),
-            progress_cb,
-        )
-        .await?;
-    } else {
-        // Local deployment: ensure image exists (pull if needed)
-        log("[status] Downloading gateway".to_string());
-        ensure_image(
-            &target_docker,
-            &image_ref,
-            registry_username.as_deref(),
-            registry_token.as_deref(),
-        )
-        .await?;
+    // Ensure the image is available on the target Docker daemon.
+    // When both the container and volume exist we can skip the pull entirely
+    // — the container already references a valid local image.  This avoids
+    // failures when the original image tag (e.g. a local-only
+    // `openshell/cluster:dev`) is not available from the default registry.
+    //
+    // When only the volume survives (container was removed), we still need
+    // the image to recreate the container, so the pull must happen.
+    let need_image = !resume || !resume_container_exists;
+    if need_image {
+        if remote_opts.is_some() {
+            log("[status] Downloading gateway".to_string());
+            let on_log_clone = Arc::clone(&on_log);
+            let progress_cb = move |msg: String| {
+                if let Ok(mut f) = on_log_clone.lock() {
+                    f(msg);
+                }
+            };
+            image::pull_remote_image(
+                &target_docker,
+                &image_ref,
+                registry_username.as_deref(),
+                registry_token.as_deref(),
+                progress_cb,
+            )
+            .await?;
+        } else {
+            // Local deployment: ensure image exists (pull if needed)
+            log("[status] Downloading gateway".to_string());
+            ensure_image(
+                &target_docker,
+                &image_ref,
+                registry_username.as_deref(),
+                registry_token.as_deref(),
+            )
+            .await?;
+        }
     }
 
     // All subsequent operations use the target Docker (remote or local)
@@ -467,6 +480,7 @@ where
             registry_token.as_deref(),
             &device_ids,
             runtime,
+            resume,
         )
         .await?;
         let port = actual_port;
@@ -530,7 +544,7 @@ where
                 .collect();
             if !images.is_empty() {
                 log("[status] Deploying components".to_string());
-                let local_docker = Docker::connect_with_local_defaults().into_diagnostic()?;
+                let local_docker = docker::connect_local(runtime)?;
                 let container = container_name(&name);
                 let on_log_ref = Arc::clone(&on_log);
                 let mut push_log = move |msg: String| {
@@ -655,7 +669,7 @@ pub async fn extract_and_store_pki(
 ) -> Result<()> {
     let docker = match remote {
         Some(r) => create_ssh_docker_client(r).await?,
-        None => Docker::connect_with_local_defaults().into_diagnostic()?,
+        None => docker::connect_for_gateway(name)?,
     };
     let cname = docker::find_gateway_container(&docker, port).await?;
     let bundle = load_existing_pki_bundle(&docker, &cname, constants::KUBECONFIG_PATH)
@@ -670,7 +684,7 @@ pub async fn ensure_gateway_image(
     registry_username: Option<&str>,
     registry_token: Option<&str>,
 ) -> Result<String> {
-    let docker = Docker::connect_with_local_defaults().into_diagnostic()?;
+    let docker = docker::connect_local_auto()?;
     let image_ref = format!("{}:{version}", image::DEFAULT_GATEWAY_IMAGE);
     ensure_image(&docker, &image_ref, registry_username, registry_token).await?;
     Ok(image_ref)
@@ -698,7 +712,7 @@ pub async fn gateway_container_logs<W: std::io::Write>(
 
     let docker = match remote {
         Some(remote_opts) => create_ssh_docker_client(remote_opts).await?,
-        None => Docker::connect_with_local_defaults().into_diagnostic()?,
+        None => docker::connect_for_gateway(name)?,
     };
 
     let container = container_name(name);
@@ -751,7 +765,7 @@ pub async fn gateway_container_logs<W: std::io::Write>(
 /// Returns an empty string on any Docker/connection error so callers don't
 /// need to worry about error handling.
 pub async fn fetch_gateway_logs(name: &str, n: usize) -> String {
-    let docker = match Docker::connect_with_local_defaults() {
+    let docker = match docker::connect_local_auto() {
         Ok(d) => d,
         Err(_) => return String::new(),
     };

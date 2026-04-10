@@ -26,21 +26,21 @@
 set -e
 
 # ---------------------------------------------------------------------------
-# Select iptables backend
+# Helpers
 # ---------------------------------------------------------------------------
-# Some kernels (e.g. Jetson Linux 5.15-tegra) have the nf_tables subsystem
-# but lack the nft_compat bridge that allows flannel and kube-proxy to use
-# xt extension modules (xt_comment, xt_conntrack). Detect this by probing
-# whether xt_comment is usable via the current iptables backend. If the
-# probe fails, switch to iptables-legacy. Set USE_IPTABLES_LEGACY=1
-# externally to skip the probe and force the legacy backend.
+# Escape a value for safe embedding as a YAML single-quoted scalar.
+# Single quotes are the only character that needs escaping ('  ->  '').
+yaml_quote() {
+    printf "'%s'" "$(printf '%s' "$1" | sed "s/'/''/g")"
+}
+
 # ---------------------------------------------------------------------------
 # Check br_netfilter kernel module
 # ---------------------------------------------------------------------------
 # br_netfilter makes the kernel pass bridge (pod-to-pod) traffic through
-# iptables. Without it, kube-proxy's DNAT rules for ClusterIP services are
-# never applied to pod traffic, so pods cannot reach services such as
-# kube-dns (10.43.0.10), breaking all in-cluster DNS resolution.
+# netfilter (iptables or nftables). Without it, kube-proxy's DNAT rules for
+# ClusterIP services are never applied to pod traffic, so pods cannot reach
+# services such as kube-dns (10.43.0.10), breaking all in-cluster DNS.
 #
 # The module must be loaded on the HOST before the container starts —
 # containers cannot load kernel modules themselves. If it is missing, log a
@@ -56,25 +56,37 @@ if [ ! -f /proc/sys/net/bridge/bridge-nf-call-iptables ]; then
 	echo "           echo br_netfilter | sudo tee /etc/modules-load.d/br_netfilter.conf" >&2
 fi
 
-if [ -z "${USE_IPTABLES_LEGACY:-}" ]; then
-	if iptables -t filter -N _xt_probe 2>/dev/null; then
-		_probe_rc=0
-		iptables -t filter -A _xt_probe -m comment --comment "probe" -j ACCEPT \
-			2>/dev/null || _probe_rc=$?
-		iptables -t filter -D _xt_probe -m comment --comment "probe" -j ACCEPT \
-			2>/dev/null || true
-		iptables -t filter -X _xt_probe 2>/dev/null || true
-		[ "$_probe_rc" -ne 0 ] && USE_IPTABLES_LEGACY=1
+# ---------------------------------------------------------------------------
+# Select iptables backend (Docker only)
+# ---------------------------------------------------------------------------
+# Under Podman with nftables kube-proxy mode, the iptables backend probe is
+# unnecessary — kube-proxy uses nft directly and flannel's iptables calls are
+# redirected to the nft backend via update-alternatives (see below).
+#
+# Under Docker (or unset runtime), probe whether xt_comment is usable. Some
+# kernels (e.g. Jetson Linux 5.15-tegra) have nf_tables but lack the
+# nft_compat bridge. If the probe fails, switch to iptables-legacy.
+if [ "${CONTAINER_RUNTIME:-}" != "podman" ]; then
+	if [ -z "${USE_IPTABLES_LEGACY:-}" ]; then
+		if iptables -t filter -N _xt_probe 2>/dev/null; then
+			_probe_rc=0
+			iptables -t filter -A _xt_probe -m comment --comment "probe" -j ACCEPT \
+				2>/dev/null || _probe_rc=$?
+			iptables -t filter -D _xt_probe -m comment --comment "probe" -j ACCEPT \
+				2>/dev/null || true
+			iptables -t filter -X _xt_probe 2>/dev/null || true
+			[ "$_probe_rc" -ne 0 ] && USE_IPTABLES_LEGACY=1
+		fi
 	fi
-fi
 
-if [ "${USE_IPTABLES_LEGACY:-0}" = "1" ]; then
-	echo "iptables nf_tables xt extension bridge unavailable — switching to iptables-legacy"
-	if update-alternatives --set iptables /usr/sbin/iptables-legacy 2>/dev/null &&
-		update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy 2>/dev/null; then
-		echo "Now using iptables-legacy mode"
-	else
-		echo "Warning: could not switch to iptables-legacy — cluster networking may fail"
+	if [ "${USE_IPTABLES_LEGACY:-0}" = "1" ]; then
+		echo "iptables nf_tables xt extension bridge unavailable — switching to iptables-legacy"
+		if update-alternatives --set iptables /usr/sbin/iptables-legacy 2>/dev/null &&
+			update-alternatives --set ip6tables /usr/sbin/ip6tables-legacy 2>/dev/null; then
+			echo "Now using iptables-legacy mode"
+		else
+			echo "Warning: could not switch to iptables-legacy — cluster networking may fail"
+		fi
 	fi
 fi
 
@@ -165,13 +177,20 @@ setup_dns_proxy() {
 	echo "Configured k3s DNS to use ${CONTAINER_IP} (proxied to Docker DNS)"
 }
 
-if ! setup_dns_proxy; then
-	echo "DNS proxy setup failed, falling back to public DNS servers"
-	echo "Note: this may not work on Docker Desktop (Mac/Windows)"
-	cat >"$RESOLV_CONF" <<EOF
+if [ "${CONTAINER_RUNTIME:-}" = "podman" ]; then
+	# Podman DNS is directly routable (aardvark-dns or host DNS) — no proxy
+	# needed. Copy the container's resolv.conf so k3s has a stable path.
+	cp /etc/resolv.conf "$RESOLV_CONF"
+	echo "Podman detected — using host DNS resolution (no proxy needed)"
+else
+	if ! setup_dns_proxy; then
+		echo "DNS proxy setup failed, falling back to public DNS servers"
+		echo "Note: this may not work on Docker Desktop (Mac/Windows)"
+		cat >"$RESOLV_CONF" <<EOF
 nameserver 8.8.8.8
 nameserver 8.8.4.4
 EOF
+	fi
 fi
 
 # ---------------------------------------------------------------------------
@@ -269,8 +288,8 @@ REGEOF
 configs:
   "${REGISTRY_HOST}":
     auth:
-      username: ${REGISTRY_USERNAME}
-      password: ${REGISTRY_PASSWORD}
+      username: $(yaml_quote "${REGISTRY_USERNAME}")
+      password: $(yaml_quote "${REGISTRY_PASSWORD}")
 REGEOF
 	fi
 
@@ -284,8 +303,8 @@ REGEOF
 			cat >>"$REGISTRIES_YAML" <<REGEOF
   "${COMMUNITY_REGISTRY_HOST}":
     auth:
-      username: ${COMMUNITY_REGISTRY_USERNAME}
-      password: ${COMMUNITY_REGISTRY_PASSWORD}
+      username: $(yaml_quote "${COMMUNITY_REGISTRY_USERNAME}")
+      password: $(yaml_quote "${COMMUNITY_REGISTRY_PASSWORD}")
 REGEOF
 		else
 			cat >>"$REGISTRIES_YAML" <<REGEOF
@@ -293,8 +312,8 @@ REGEOF
 configs:
   "${COMMUNITY_REGISTRY_HOST}":
     auth:
-      username: ${COMMUNITY_REGISTRY_USERNAME}
-      password: ${COMMUNITY_REGISTRY_PASSWORD}
+      username: $(yaml_quote "${COMMUNITY_REGISTRY_USERNAME}")
+      password: $(yaml_quote "${COMMUNITY_REGISTRY_PASSWORD}")
 REGEOF
 		fi
 	fi
@@ -623,7 +642,9 @@ fi
 # On kernels where xt_comment is unavailable, kube-router's network policy
 # controller panics at startup. Disable it when the iptables-legacy probe
 # triggered; sandbox isolation is enforced by the NSSH1 HMAC handshake instead.
-if [ "${USE_IPTABLES_LEGACY:-0}" = "1" ]; then
+# Under Podman with nftables kube-proxy, the xt probe is skipped entirely so
+# USE_IPTABLES_LEGACY is never set — network policy stays enabled.
+if [ "${USE_IPTABLES_LEGACY:-0}" = "1" ] && [ "${CONTAINER_RUNTIME:-}" != "podman" ]; then
 	EXTRA_KUBELET_ARGS="$EXTRA_KUBELET_ARGS --disable-network-policy"
 fi
 
@@ -632,8 +653,72 @@ fi
 # routing to settle first.
 wait_for_default_route
 
+# ---------------------------------------------------------------------------
+# Deterministic k3s node name
+# ---------------------------------------------------------------------------
+# By default k3s uses the container hostname (= Docker container ID) as the
+# node name.  When the container is recreated (e.g. after an image upgrade),
+# the container ID changes, registering a new k3s node.  The bootstrap code
+# then deletes PVCs whose backing PVs have node affinity for the old node —
+# wiping the server database and any sandbox persistent volumes.
+#
+# OPENSHELL_NODE_NAME is set by the bootstrap code to a deterministic value
+# derived from the gateway name, so the node identity survives container
+# recreation and PVCs are never orphaned.
+NODE_NAME_ARG=""
+if [ -n "${OPENSHELL_NODE_NAME:-}" ]; then
+    NODE_NAME_ARG="--node-name=${OPENSHELL_NODE_NAME}"
+    echo "Using deterministic k3s node name: ${OPENSHELL_NODE_NAME}"
+fi
+
+# ---------------------------------------------------------------------------
+# Select kube-proxy mode and iptables backend
+# ---------------------------------------------------------------------------
+# Under Podman, use native nftables kube-proxy mode so no legacy iptables
+# kernel modules are needed for kube-proxy service routing.
+#
+# Flannel's embedded traffic manager in k3s v1.35.x still uses the iptables
+# binary for masquerade rules.  By default, the container's iptables
+# alternative points to iptables-legacy, which requires the iptable_nat and
+# iptable_filter kernel modules.  Modern distributions (Fedora 43+, RHEL 10+)
+# ship only nf_tables and no longer load these legacy modules.
+#
+# The fix: register the k3s-bundled xtables-nft-multi as a higher-priority
+# iptables alternative so flannel uses the nf_tables kernel path instead of
+# the legacy iptable_nat path.  This eliminates the dependency on legacy
+# iptables kernel modules entirely.
+#
+# Docker retains the default iptables kube-proxy mode for maximum compatibility.
+EXTRA_KUBE_PROXY_ARGS=""
+if [ "${CONTAINER_RUNTIME:-}" = "podman" ]; then
+	echo "Podman detected — using nftables kube-proxy mode"
+	EXTRA_KUBE_PROXY_ARGS="--kube-proxy-arg=proxy-mode=nftables"
+
+	# Switch the iptables alternative to the nft backend so flannel's
+	# masquerade rules use the nf_tables kernel module instead of requiring
+	# legacy iptable_nat/iptable_filter modules.  The k3s image bundles
+	# xtables-nft-multi at /usr/bin/aux/; registering it at priority 20
+	# (above iptables-legacy's priority 10) makes it the auto-selected
+	# default.
+	if [ -x /usr/bin/aux/xtables-nft-multi ]; then
+		update-alternatives --install \
+			/usr/sbin/iptables iptables /usr/bin/aux/xtables-nft-multi 20 \
+			--follower /usr/sbin/ip6tables ip6tables /usr/bin/aux/xtables-nft-multi \
+			--follower /usr/sbin/iptables-save iptables-save /usr/bin/aux/xtables-nft-multi \
+			--follower /usr/sbin/iptables-restore iptables-restore /usr/bin/aux/xtables-nft-multi \
+			--follower /usr/sbin/ip6tables-save ip6tables-save /usr/bin/aux/xtables-nft-multi \
+			--follower /usr/sbin/ip6tables-restore ip6tables-restore /usr/bin/aux/xtables-nft-multi \
+			>/dev/null 2>&1 && \
+			echo "Switched iptables to nft backend for flannel compatibility" || \
+			echo "Warning: could not register iptables-nft alternative — flannel may fail on nftables-only hosts" >&2
+	fi
+fi
+
 # Execute k3s with explicit resolv-conf passed as a kubelet arg.
 # k3s v1.35.2+ no longer accepts --resolv-conf as a top-level server flag;
 # it must be passed via --kubelet-arg instead.
 # shellcheck disable=SC2086
-exec /bin/k3s "$@" --kubelet-arg=resolv-conf="$RESOLV_CONF" $EXTRA_KUBELET_ARGS
+exec /bin/k3s "$@" $NODE_NAME_ARG \
+	--kubelet-arg=resolv-conf="$RESOLV_CONF" \
+	$EXTRA_KUBELET_ARGS \
+	$EXTRA_KUBE_PROXY_ARGS
