@@ -123,7 +123,7 @@ impl ProxyHandle {
     /// The proxy uses OPA for network decisions with process-identity binding
     /// via `/proc/net/tcp`. All connections are evaluated through OPA policy.
     #[allow(clippy::too_many_arguments)]
-    pub async fn start_with_bind_addr(
+    pub(crate) async fn start_with_bind_addr(
         policy: &ProxyPolicy,
         bind_addr: Option<SocketAddr>,
         opa_engine: Arc<OpaEngine>,
@@ -1739,32 +1739,25 @@ async fn handle_forward_proxy(
     };
     let host_lc = host.to_ascii_lowercase();
 
-    // 2. Intercept OAuth token exchange for Claude CLI compatibility
-    //    When Claude CLI tries to exchange fake ADC credentials, return our cached token
-    if host_lc == "oauth2.googleapis.com" && path == "/token" && method == "POST" {
-        if let Some(_resolver) = &secret_resolver {
-            // Try to get VERTEX_ACCESS_TOKEN from the resolver
-            if let Some(vertex_token) = std::env::var("VERTEX_ACCESS_TOKEN").ok() {
-                info!(
-                    dst_host = %host_lc,
-                    dst_port = port,
-                    "Intercepting OAuth token exchange, returning cached Vertex token"
-                );
+    // 2. Provider-specific request interception (Vertex AI OAuth workaround)
+    //
+    // Check if this request should be intercepted by a provider-specific handler.
+    // Currently only used by Vertex AI to intercept OAuth token exchange for
+    // Claude CLI compatibility. See `providers::vertex` module for details.
+    //
+    // **Context:** This is the L4 forward proxy path (HTTP without TLS termination).
+    // For requests that go through L7 inspection (TLS-terminated), interception happens
+    // in rest.rs via the same vertex provider module.
+    if crate::providers::vertex::should_intercept_oauth_request(method, &host_lc, &path) {
+        crate::providers::vertex::log_oauth_interception("L4/forward-proxy");
 
-                // Return a mock OAuth response with our cached token
-                let response_body = format!(
-                    r#"{{"access_token":"{}","token_type":"Bearer","expires_in":3600}}"#,
-                    vertex_token
-                );
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
-                    response_body.len(),
-                    response_body
-                );
-                respond(client, response.as_bytes()).await?;
-                return Ok(());
-            }
-        }
+        // For L4 path, we can inject the real cached token if available
+        let access_token = std::env::var("VERTEX_ACCESS_TOKEN").ok();
+        let response =
+            crate::providers::vertex::generate_fake_oauth_response(access_token.as_deref());
+
+        respond(client, &response).await?;
+        return Ok(());
     }
 
     // 3. Reject HTTPS — must use CONNECT for TLS

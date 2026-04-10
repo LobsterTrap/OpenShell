@@ -17,6 +17,7 @@ pub mod opa;
 mod policy;
 mod process;
 pub mod procfs;
+mod providers;
 pub mod proxy;
 mod sandbox;
 mod secrets;
@@ -1456,10 +1457,23 @@ fn prepare_filesystem(_policy: &SandboxPolicy) -> Result<()> {
 
 /// Create fake ADC credentials file for Vertex AI provider.
 ///
-/// This allows Claude CLI to work with Vertex AI without writing real
-/// credentials to disk. The fake credentials are intercepted by the proxy,
-/// which returns a fake OAuth success and then injects real tokens via
-/// Authorization headers.
+/// **Vertex AI + Claude CLI workaround:**
+/// - Claude CLI requires ADC credentials on disk to work with Vertex AI
+/// - We create fake ADC credentials here to satisfy Claude CLI's requirements
+/// - When Claude CLI tries to exchange these fake credentials with Google OAuth,
+///   the proxy intercepts the request (see rest.rs and proxy.rs oauth2.googleapis.com handling)
+/// - The proxy returns a fake OAuth success, allowing Claude CLI to proceed
+/// - Real OAuth tokens are injected via Authorization headers for actual API requests
+///
+/// **Why not use real credentials:**
+/// - Security: Avoid writing long-lived refresh tokens to disk in the sandbox
+/// - Simplicity: Users don't need to run `gcloud auth` inside the sandbox
+/// - Consistency: Token management is centralized in the gateway TokenCache
+///
+/// **Related code:**
+/// - OAuth interception: `crates/openshell-sandbox/src/l7/rest.rs` (relay_http_request_with_resolver)
+/// - OAuth interception: `crates/openshell-sandbox/src/proxy.rs` (handle_forward_proxy)
+/// - Token injection: `crates/openshell-sandbox/src/l7/rest.rs` (inject_oauth_header)
 #[cfg(unix)]
 fn create_fake_vertex_adc(policy: &SandboxPolicy) -> Result<()> {
     use nix::unistd::{Group, User, chown};

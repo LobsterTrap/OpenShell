@@ -12,7 +12,7 @@ use crate::secrets::rewrite_http_header_block;
 use miette::{IntoDiagnostic, Result, miette};
 use std::collections::HashMap;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 const MAX_HEADER_BYTES: usize = 16384; // 16 KiB for HTTP headers
 const RELAY_BUF_SIZE: usize = 8192;
@@ -255,8 +255,10 @@ where
     relay_http_request_with_resolver(req, client, upstream, None, None).await
 }
 
-/// Check if the request is to a Vertex AI API endpoint
-/// Get OAuth access token from environment or resolver
+/// Get OAuth access token from environment or resolver.
+///
+/// Returns `None` if the token is not found, which will be logged as a warning
+/// by the caller to help debug OAuth configuration issues.
 fn get_oauth_access_token(
     token_env_var: &str,
     resolver: Option<&crate::secrets::SecretResolver>,
@@ -287,7 +289,13 @@ fn inject_oauth_header(
 
     // Get the access token
     let Some(access_token) = get_oauth_access_token(&oauth_config.token_env_var, resolver) else {
-        // No token available, fall back to standard rewriting
+        // No token available - log warning to help debug OAuth configuration issues
+        warn!(
+            token_env_var = %oauth_config.token_env_var,
+            "OAuth token not found in environment or resolver. Check that the token_env_var \
+             in the sandbox policy matches the credential key from the provider. Falling back \
+             to standard credential rewriting."
+        );
         return rewrite_http_header_block(raw, resolver);
     };
 
@@ -354,8 +362,11 @@ where
     C: AsyncRead + AsyncWrite + Unpin,
     U: AsyncRead + AsyncWrite + Unpin,
 {
-    // Intercept OAuth token exchange for fake ADC credentials
-    // Return fake success so Claude CLI proceeds to API requests
+    // Provider-specific request interception (Vertex AI OAuth workaround)
+    //
+    // Check if this request should be intercepted by a provider-specific handler.
+    // Currently only used by Vertex AI to intercept OAuth token exchange for
+    // Claude CLI compatibility. See `providers::vertex` module for details.
     if req.action == "POST" && req.target == "/token" {
         let header_str = String::from_utf8_lossy(&req.raw_header);
         if let Some(host_line) = header_str
@@ -363,20 +374,17 @@ where
             .find(|line| line.to_ascii_lowercase().starts_with("host:"))
         {
             let host = host_line.split_once(':').map_or("", |(_, h)| h.trim());
-            if host.to_ascii_lowercase() == "oauth2.googleapis.com" {
-                info!("Intercepting OAuth token exchange, returning fake success");
 
-                let response_body = r#"{"access_token":"fake-token-will-be-replaced-by-proxy","token_type":"Bearer","expires_in":3600}"#;
-                let response = format!(
-                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{}",
-                    response_body.len(),
-                    response_body
-                );
+            // Check if Vertex provider should intercept this request
+            if crate::providers::vertex::should_intercept_oauth_request(
+                &req.action,
+                host,
+                &req.target,
+            ) {
+                crate::providers::vertex::log_oauth_interception("L7/TLS-terminated");
+                let response = crate::providers::vertex::generate_fake_oauth_response(None);
 
-                client
-                    .write_all(response.as_bytes())
-                    .await
-                    .into_diagnostic()?;
+                client.write_all(&response).await.into_diagnostic()?;
                 client.flush().await.into_diagnostic()?;
                 return Ok(RelayOutcome::Consumed);
             }
@@ -682,6 +690,7 @@ fn find_crlf(buf: &[u8], start: usize) -> Option<usize> {
 ///
 /// Note: callers that receive `Upgraded` are responsible for switching to
 /// raw bidirectional relay and forwarding the overflow bytes.
+#[allow(dead_code)]
 pub(crate) async fn relay_response_to_client<U, C>(
     upstream: &mut U,
     client: &mut C,

@@ -20,6 +20,14 @@ pub(crate) const PLACEHOLDER_PREFIX_PUBLIC: &str = PLACEHOLDER_PREFIX;
 /// `/proc/<pid>/environ`, unlike placeholder-based credentials which are only resolved
 /// within HTTP requests. Only include credentials here when direct env var access is
 /// required for tool compatibility.
+///
+/// **VERTEX_ADC security warning**:
+/// - VERTEX_ADC contains Google OAuth refresh tokens with long expiration (typically hours to days)
+/// - These refresh tokens can be used to obtain new access tokens for the scoped GCP project
+/// - Visible in `/proc/<pid>/environ` to all processes in the sandbox
+/// - Recommendation: Use ADC with least-privilege service account scopes (e.g., only Vertex AI access)
+/// - Avoid using ADC from accounts with broad GCP permissions (Owner, Editor, etc.)
+/// - Consider using Workload Identity Federation for production deployments instead of ADC
 fn direct_inject_credentials() -> &'static [&'static str] {
     &[
         // Vertex AI credentials for claude CLI
@@ -68,6 +76,7 @@ pub(crate) struct RewriteResult {
     /// A redacted version of the request target for logging.
     /// Contains `[CREDENTIAL]` in place of resolved credential values.
     /// `None` if the target was not modified.
+    #[allow(dead_code)]
     pub redacted_target: Option<String>,
 }
 

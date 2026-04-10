@@ -383,6 +383,7 @@ impl NetworkNamespace {
     /// # Safety
     ///
     /// This function should only be called in a `pre_exec` context after fork.
+    #[allow(unsafe_code)]
     pub fn enter(&self) -> Result<()> {
         if let Some(fd) = self.ns_fd {
             debug!(namespace = %self.name, "Entering network namespace via setns");

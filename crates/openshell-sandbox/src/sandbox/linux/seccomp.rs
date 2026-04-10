@@ -13,6 +13,7 @@ use std::collections::BTreeMap;
 use std::convert::TryInto;
 use tracing::debug;
 
+#[allow(unsafe_code)]
 pub fn apply(policy: &SandboxPolicy) -> Result<()> {
     if matches!(policy.network.mode, NetworkMode::Allow) {
         return Ok(());
