@@ -176,23 +176,6 @@ These are the primary `mise` tasks for day-to-day development:
 | `mise run docs`    | Build and serve documentation locally                   |
 | `mise run clean`   | Clean build artifacts                                   |
 
-## Rebuilding After Code Changes
-
-When developing OpenShell core components (gateway, router, sandbox supervisor), you need to rebuild the cluster to test your changes:
-
-```bash
-bash scripts/rebuild-cluster.sh
-```
-
-This script stops the cluster, rebuilds the image with your changes, and restarts it.
-
-**After rebuilding:**
-- Providers need to be recreated (gateway database was reset)
-- Inference routing needs to be reconfigured
-- Sandboxes need to be recreated
-
-For a complete cleanup, see the cleanup scripts in the `scripts/` directory.
-
 ## Project Structure
 
 | Path            | Purpose                                       |

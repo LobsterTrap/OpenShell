@@ -30,7 +30,10 @@ if [[ "${CONTAINER_RUNTIME}" == "podman" ]]; then
 	echo "Note: Podman builds platforms sequentially (slower than Docker buildx)"
 	export DOCKER_BUILDER=""
 
-	# Podman: build each platform separately and create manifest
+	# Podman implements multi-arch via explicit manifest creation + per-platform
+	# builds. Cannot use docker-build-image.sh here because it builds single
+	# images, not manifests. Docker buildx handles multi-arch internally, so the
+	# Docker path below can delegate to docker-build-image.sh.
 	IFS=',' read -ra PLATFORM_ARRAY <<< "${PLATFORMS}"
 
 	for component in gateway cluster; do
@@ -98,6 +101,8 @@ else
 	tasks/scripts/docker-build-image.sh cluster
 fi
 
+# Build list of additional tags to apply (beyond IMAGE_TAG which is already set).
+# Combines EXTRA_TAGS with optional "latest" tag without modifying EXTRA_TAGS.
 TAGS_TO_APPLY=(${EXTRA_TAGS[@]+"${EXTRA_TAGS[@]}"})
 if [[ "${TAG_LATEST}" == "true" ]]; then
 	TAGS_TO_APPLY+=("latest")

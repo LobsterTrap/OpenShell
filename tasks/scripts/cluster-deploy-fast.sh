@@ -28,22 +28,8 @@ log_duration() {
 	echo "${label} took $((end - start))s"
 }
 
-# Read lines into an array variable (bash 3 & 4 compatible)
-# Usage: read_lines_into_array array_name < <(command)
-read_lines_into_array() {
-  local array_name=$1
-  if ((BASH_VERSINFO[0] >= 4)); then
-    # Bash 4+: use mapfile (faster)
-    mapfile -t "$array_name"
-  else
-    # Bash 3: use while loop
-    local line
-    eval "$array_name=()"
-    while IFS= read -r line; do
-      eval "$array_name+=(\"\$line\")"
-    done
-  fi
-}
+# shellcheck source=lib/common.sh
+source "$(dirname "$0")/lib/common.sh"
 
 if ! $CONTAINER_RUNTIME ps -q --filter "name=^${CONTAINER_NAME}$" --filter "health=healthy" | grep -q .; then
 	echo "Error: Cluster container '${CONTAINER_NAME}' is not running or not healthy."

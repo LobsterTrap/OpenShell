@@ -10,22 +10,8 @@ STATE_FILE="$PROJECT_ROOT/.cache/openshell-build.state"
 # Bash version compatibility helper
 # ---------------------------------------------------------------------------
 
-# Read lines into an array variable (bash 3 & 4 compatible)
-# Usage: read_lines_into_array array_name < <(command)
-read_lines_into_array() {
-  local array_name=$1
-  if ((BASH_VERSINFO[0] >= 4)); then
-    # Bash 4+: use mapfile (faster)
-    mapfile -t "$array_name"
-  else
-    # Bash 3: use while loop
-    local line
-    eval "$array_name=()"
-    while IFS= read -r line; do
-      eval "$array_name+=(\"\$line\")"
-    done
-  fi
-}
+# shellcheck source=tasks/scripts/lib/common.sh
+source "$PROJECT_ROOT/tasks/scripts/lib/common.sh"
 
 # ---------------------------------------------------------------------------
 # Fingerprint-based rebuild check
