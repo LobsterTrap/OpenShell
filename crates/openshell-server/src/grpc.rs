@@ -4496,7 +4496,6 @@ mod tests {
     use std::collections::HashMap;
     use tonic::Code;
 
-
     #[test]
     fn env_key_validation_accepts_valid_keys() {
         assert!(is_valid_env_key("PATH"));
@@ -5092,9 +5091,10 @@ mod tests {
     async fn resolve_provider_env_unknown_name_returns_error() {
         let store = Store::connect("sqlite::memory:").await.unwrap();
         let token_caches = tokio::sync::Mutex::new(HashMap::new());
-        let err = resolve_provider_environment(&store, &token_caches, &["nonexistent".to_string()], None)
-            .await
-            .unwrap_err();
+        let err =
+            resolve_provider_environment(&store, &token_caches, &["nonexistent".to_string()], None)
+                .await
+                .unwrap_err();
         assert_eq!(err.code(), Code::FailedPrecondition);
         assert!(err.message().contains("nonexistent"));
     }
@@ -5118,10 +5118,14 @@ mod tests {
         create_provider_record(&store, provider).await.unwrap();
         let token_caches = tokio::sync::Mutex::new(HashMap::new());
 
-        let (env, _metadata) =
-            resolve_provider_environment(&store, &token_caches, &["test-provider".to_string()], None)
-                .await
-                .unwrap();
+        let (env, _metadata) = resolve_provider_environment(
+            &store,
+            &token_caches,
+            &["test-provider".to_string()],
+            None,
+        )
+        .await
+        .unwrap();
         assert_eq!(env.get("VALID_KEY"), Some(&"value".to_string()));
         assert!(!env.contains_key("nested.api_key"));
         assert!(!env.contains_key("bad-key"));
@@ -5267,9 +5271,10 @@ mod tests {
             .unwrap();
         let spec = loaded.spec.unwrap();
         let token_caches = tokio::sync::Mutex::new(HashMap::new());
-        let (env, _metadata) = resolve_provider_environment(&store, &token_caches, &spec.providers, None)
-            .await
-            .unwrap();
+        let (env, _metadata) =
+            resolve_provider_environment(&store, &token_caches, &spec.providers, None)
+                .await
+                .unwrap();
 
         assert_eq!(env.get("ANTHROPIC_API_KEY"), Some(&"sk-test".to_string()));
     }
@@ -5299,9 +5304,10 @@ mod tests {
             .unwrap();
         let spec = loaded.spec.unwrap();
         let token_caches = tokio::sync::Mutex::new(HashMap::new());
-        let (env, metadata) = resolve_provider_environment(&store, &token_caches, &spec.providers, None)
-            .await
-            .unwrap();
+        let (env, metadata) =
+            resolve_provider_environment(&store, &token_caches, &spec.providers, None)
+                .await
+                .unwrap();
 
         assert!(env.is_empty());
         assert!(metadata.is_empty());
