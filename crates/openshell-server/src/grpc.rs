@@ -3721,7 +3721,7 @@ async fn resolve_provider_environment(
                                     // For Vertex ADC: keep original JSON, create ACCESS_TOKEN with token
                                     // Claude CLI needs the JSON file for ADC parsing
                                     if provider.r#type == "vertex" && key == "VERTEX_ADC" {
-                                        // Keep original ADC JSON
+                                        // Keep original ADC JSON (supervisor needs it to create fake ADC file)
                                         env.entry(key.clone()).or_insert_with(|| value.clone());
                                         // Add OAuth token as VERTEX_ACCESS_TOKEN for proxy injection
                                         env.entry("VERTEX_ACCESS_TOKEN".to_string())
