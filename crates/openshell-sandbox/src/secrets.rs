@@ -31,8 +31,8 @@ pub(crate) const PLACEHOLDER_PREFIX_PUBLIC: &str = PLACEHOLDER_PREFIX;
 fn direct_inject_credentials() -> &'static [&'static str] {
     &[
         // Vertex AI credentials for claude CLI
-        // VERTEX_ADC contains the full ADC JSON for Claude CLI to parse and write to file
-        "VERTEX_ADC",
+        // NOTE: VERTEX_ADC is filtered out in process.rs - agent processes use
+        // fake ADC file created by supervisor instead of real credentials
         "ANTHROPIC_VERTEX_PROJECT_ID",
         "ANTHROPIC_VERTEX_REGION",
         "CLAUDE_CODE_USE_VERTEX",
