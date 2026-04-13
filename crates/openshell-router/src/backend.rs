@@ -95,7 +95,7 @@ async fn send_backend_request(
     headers: Vec<(String, String)>,
     body: bytes::Bytes,
 ) -> Result<reqwest::Response, RouterError> {
-    let url = build_backend_url(&route.endpoint, path);
+    let url = build_backend_url(&route.endpoint, path, &route.model);
 
     let reqwest_method: reqwest::Method = method
         .parse()
@@ -137,13 +137,24 @@ async fn send_backend_request(
 
     // Set the "model" field in the JSON body to the route's configured model so the
     // backend receives the correct model ID regardless of what the client sent.
+    //
+    // Exception: Vertex AI's :streamRawPredict endpoint expects the model in the URL
+    // path (already handled in build_backend_url), not in the request body.
+    let is_vertex_ai = route.endpoint.contains("aiplatform.googleapis.com");
+
     let body = match serde_json::from_slice::<serde_json::Value>(&body) {
         Ok(mut json) => {
             if let Some(obj) = json.as_object_mut() {
-                obj.insert(
-                    "model".to_string(),
-                    serde_json::Value::String(route.model.clone()),
-                );
+                if is_vertex_ai {
+                    // Remove model field for Vertex AI (it's in the URL path)
+                    obj.remove("model");
+                } else {
+                    // Insert/override model field for standard backends
+                    obj.insert(
+                        "model".to_string(),
+                        serde_json::Value::String(route.model.clone()),
+                    );
+                }
             }
             bytes::Bytes::from(serde_json::to_vec(&json).unwrap_or_else(|_| body.to_vec()))
         }
@@ -241,7 +252,7 @@ pub async fn verify_backend_endpoint(
 
     if mock::is_mock_route(route) {
         return Ok(ValidatedEndpoint {
-            url: build_backend_url(&route.endpoint, probe.path),
+            url: build_backend_url(&route.endpoint, probe.path, &route.model),
             protocol: probe.protocol.to_string(),
         });
     }
@@ -306,7 +317,7 @@ async fn try_validation_request(
                 details,
             },
         })?;
-    let url = build_backend_url(&route.endpoint, path);
+    let url = build_backend_url(&route.endpoint, path, &route.model);
 
     if response.status().is_success() {
         return Ok(ValidatedEndpoint {
@@ -418,8 +429,23 @@ pub async fn proxy_to_backend_streaming(
     })
 }
 
-fn build_backend_url(endpoint: &str, path: &str) -> String {
+fn build_backend_url(endpoint: &str, path: &str, model: &str) -> String {
     let base = endpoint.trim_end_matches('/');
+
+    // Special handling for Vertex AI
+    if base.contains("aiplatform.googleapis.com") && path.starts_with("/v1/messages") {
+        // Vertex AI uses a different path structure:
+        // https://{region}-aiplatform.googleapis.com/v1/projects/{project}/locations/{region}/publishers/anthropic/models/{model}:streamRawPredict
+        // The base already has everything up to /models, so we append /{model}:streamRawPredict
+        let model_suffix = if model.is_empty() {
+            String::new()
+        } else {
+            format!("/{}", model)
+        };
+        return format!("{}{}:streamRawPredict", base, model_suffix);
+    }
+
+    // Deduplicate /v1 prefix for standard endpoints
     if base.ends_with("/v1") && (path == "/v1" || path.starts_with("/v1/")) {
         return format!("{base}{}", &path[3..]);
     }
@@ -438,7 +464,7 @@ mod tests {
     #[test]
     fn build_backend_url_dedupes_v1_prefix() {
         assert_eq!(
-            build_backend_url("https://api.openai.com/v1", "/v1/chat/completions"),
+            build_backend_url("https://api.openai.com/v1", "/v1/chat/completions", "gpt-4"),
             "https://api.openai.com/v1/chat/completions"
         );
     }
@@ -446,15 +472,27 @@ mod tests {
     #[test]
     fn build_backend_url_preserves_non_versioned_base() {
         assert_eq!(
-            build_backend_url("https://api.anthropic.com", "/v1/messages"),
+            build_backend_url("https://api.anthropic.com", "/v1/messages", "claude-3"),
             "https://api.anthropic.com/v1/messages"
+        );
+    }
+
+    #[test]
+    fn build_backend_url_handles_vertex_ai() {
+        assert_eq!(
+            build_backend_url(
+                "https://us-central1-aiplatform.googleapis.com/v1/projects/my-project/locations/us-central1/publishers/anthropic/models",
+                "/v1/messages",
+                "claude-3-5-sonnet-20241022"
+            ),
+            "https://us-central1-aiplatform.googleapis.com/v1/projects/my-project/locations/us-central1/publishers/anthropic/models/claude-3-5-sonnet-20241022:streamRawPredict"
         );
     }
 
     #[test]
     fn build_backend_url_handles_exact_v1_path() {
         assert_eq!(
-            build_backend_url("https://api.openai.com/v1", "/v1"),
+            build_backend_url("https://api.openai.com/v1", "/v1", "gpt-4"),
             "https://api.openai.com/v1"
         );
     }

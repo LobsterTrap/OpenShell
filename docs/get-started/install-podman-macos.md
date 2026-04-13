@@ -35,9 +35,7 @@ brew install podman mise
 bash scripts/setup-podman-macos.sh
 source scripts/podman.env
 mise run cluster:build:full
-cargo build --release -p openshell-cli
-mkdir -p ~/.local/bin
-cp target/release/openshell ~/.local/bin/
+cargo install --path crates/openshell-cli --root ~/.local
 openshell sandbox create
 ```
 
@@ -53,7 +51,7 @@ brew install podman mise
 
 The `scripts/setup-podman-macos.sh` script automates Podman Machine configuration:
 
-- Creates a dedicated `openshell` Podman machine (8 GB RAM, 4 CPUs)
+- Creates a dedicated `openshell` Podman machine (12 GB RAM, 4 CPUs)
 - Configures cgroup delegation (required for the embedded k3s cluster)
 - Stops conflicting machines (only one can run at a time, with user confirmation)
 
@@ -72,7 +70,9 @@ source scripts/podman.env
 This sets:
 - `CONTAINER_HOST` - Podman socket path
 - `OPENSHELL_CONTAINER_RUNTIME=podman` - Use Podman runtime
-- `OPENSHELL_REGISTRY=127.0.0.1:5000/openshell` - Local registry for component images
+- `OPENSHELL_IMAGE_REPO_BASE=127.0.0.1:5000/openshell` - Local registry for component images
+- `OPENSHELL_REGISTRY_HOST=127.0.0.1:5000` - Registry host
+- `OPENSHELL_REGISTRY_INSECURE=true` - Allow HTTP registry
 - `OPENSHELL_CLUSTER_IMAGE=localhost/openshell/cluster:dev` - Local cluster image
 
 To make these persistent, add to your shell profile (`~/.zshrc` or `~/.bashrc`):
@@ -90,12 +90,13 @@ mise run cluster:build:full
 ```
 
 This command:
-- Builds the gateway image
+- Builds the gateway and cluster images
 - Starts a local container registry at `127.0.0.1:5000`
-- Builds the cluster image
-- Pushes images to the local registry
+- Pushes the gateway image to the local registry
 - Bootstraps a k3s cluster inside a Podman container
-- Deploys the OpenShell gateway
+- Deploys and starts the OpenShell gateway
+
+**Note:** This command builds the images AND starts the gateway in one step. The gateway will be running when the command completes.
 
 Or run the script directly:
 
@@ -114,24 +115,53 @@ tasks/scripts/cluster-bootstrap.sh build
 For a release-optimized binary that works system-wide:
 
 ```console
-cargo build --release -p openshell-cli
-mkdir -p ~/.local/bin
-cp target/release/openshell ~/.local/bin/
+cargo install --path crates/openshell-cli --root ~/.local
 ```
 
 ## Create a Sandbox
+
+The gateway is now running. Create a sandbox to test it:
 
 ```console
 openshell sandbox create
 ```
 
+Verify the gateway is healthy:
+
+```console
+openshell gateway info
+```
+
+## Rebuilding After Code Changes
+
+If you're developing OpenShell and need to test code changes, use the rebuild script:
+
+```console
+bash scripts/rebuild-cluster.sh
+```
+
+This stops the cluster, removes the old image, rebuilds with your changes, and restarts. After rebuilding:
+1. Recreate providers (gateway database was reset)
+2. Reconfigure inference routing if needed
+3. Recreate sandboxes
+
 ## Cleanup
 
-To remove all OpenShell resources and optionally the Podman machine:
+### Quick Rebuild (Development)
+
+```console
+bash scripts/rebuild-cluster.sh
+```
+
+Rebuilds the cluster with latest code changes. Use this during development.
+
+### Full Cleanup (Start Fresh)
 
 ```console
 bash cleanup-openshell-podman-macos.sh
 ```
+
+Removes all OpenShell resources and optionally the Podman machine. Use this to completely reset your installation.
 
 ## Troubleshooting
 
@@ -154,11 +184,11 @@ openshell sandbox create
 
 ### Build fails with memory errors
 
-Increase the Podman machine memory allocation:
+Increase the Podman machine memory allocation (default is 12 GB):
 
 ```console
 podman machine stop openshell
-podman machine set openshell --memory 8192
+podman machine set openshell --memory 16384
 podman machine start openshell
 ```
 

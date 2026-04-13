@@ -26,6 +26,18 @@ const SSH_HANDSHAKE_SECRET_ENV: &str = "OPENSHELL_SSH_HANDSHAKE_SECRET";
 
 fn inject_provider_env(cmd: &mut Command, provider_env: &HashMap<String, String>) {
     for (key, value) in provider_env {
+        // Filter out OAuth access tokens - these are only needed by the supervisor's
+        // proxy for header injection, not by agent processes (Claude CLI, bash, etc.)
+        if key.ends_with("_ACCESS_TOKEN") {
+            continue;
+        }
+
+        // Filter out ADC credentials - agent processes use fake ADC file instead
+        // (created by supervisor based on VERTEX_ADC presence in provider_env)
+        if key == "VERTEX_ADC" {
+            continue;
+        }
+
         cmd.env(key, value);
     }
 }

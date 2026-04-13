@@ -25,6 +25,7 @@ use tracing::debug;
 /// Value of `SECCOMP_SET_MODE_FILTER` (linux/seccomp.h).
 const SECCOMP_SET_MODE_FILTER: u64 = 1;
 
+#[allow(unsafe_code)]
 pub fn apply(policy: &SandboxPolicy) -> Result<()> {
     if matches!(policy.network.mode, NetworkMode::Allow) {
         return Ok(());

@@ -100,6 +100,66 @@ These pipelines connect skills into end-to-end workflows. Individual skill files
 - Bollard (the Rust Docker client library) connects to Podman via its Docker-compatible API — no separate Podman client is needed.
 - When referencing host gateway aliases, use both `host.docker.internal` and `host.containers.internal` for cross-runtime compatibility.
 
+### Debugging with Podman
+
+When using Podman (especially on macOS where Podman runs in a VM), debugging requires accessing the Podman machine:
+
+**Accessing the Podman VM:**
+```bash
+podman machine ssh
+```
+
+**Common debugging commands:**
+```bash
+# Check cluster logs via kubectl (inside podman machine or via ssh)
+podman machine ssh -- "podman exec openshell-cluster-openshell kubectl logs -n openshell <pod-name>"
+
+# Check running containers
+podman machine ssh -- "podman ps -a"
+
+# Check images and timestamps
+podman machine ssh -- "podman images"
+
+# Verify binary in cluster
+podman machine ssh -- "podman exec openshell-cluster-openshell ls -lh /opt/openshell/bin/openshell-sandbox"
+
+# Check for specific strings in binary
+podman machine ssh -- "podman exec openshell-cluster-openshell strings /opt/openshell/bin/openshell-sandbox | grep <pattern>"
+
+# Get sandbox pod logs
+podman machine ssh -- "podman exec openshell-cluster-openshell kubectl logs -n openshell <sandbox-name> --container agent --tail 100"
+```
+
+**Important: Cross-compilation requirement**
+
+Running `cargo build --release` on macOS produces a macOS binary, not a Linux binary. The cluster runs Linux containers, so using a macOS binary causes "exec format error".
+
+- ✅ **Correct:** Use `mise run cluster:build:full` which handles cross-compilation
+- ❌ **Incorrect:** `cargo build --release` then manually copying the binary
+
+**Fast iteration workflow:**
+
+After modifying Rust code in `crates/openshell-sandbox/`:
+
+```bash
+# Force clean rebuild to avoid cargo cache issues
+cargo clean -p openshell-sandbox
+
+# Full cluster rebuild (handles cross-compilation)
+mise run cluster:build:full
+
+# Recreate sandbox to pick up new binary
+openshell sandbox delete <name>
+openshell sandbox create --name <name> --provider <provider> --policy <policy> -- bash
+```
+
+**Common issues:**
+
+- **"exec format error"**: Binary is for wrong architecture (macOS vs Linux)
+- **Binary not updating**: Cargo is using cached artifacts - run `cargo clean -p openshell-sandbox`
+- **Empty logs**: `RUST_LOG` environment variable not set in sandbox agent - logs are disabled by default
+- **Changes not reflected**: Sandbox was created before cluster rebuild - always recreate sandboxes after deploying new binaries
+
 ## Cluster Infrastructure Changes
 
 - If you change cluster bootstrap infrastructure (e.g., `openshell-bootstrap` crate, `deploy/docker/Dockerfile.images`, `cluster-entrypoint.sh`, `cluster-healthcheck.sh`, deploy logic in `openshell-cli`), update the `debug-openshell-cluster` skill in `.agents/skills/debug-openshell-cluster/SKILL.md` to reflect those changes.

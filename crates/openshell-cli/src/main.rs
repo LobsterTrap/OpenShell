@@ -615,6 +615,7 @@ enum CliProviderType {
     Gitlab,
     Github,
     Outlook,
+    Vertex,
 }
 
 #[derive(Clone, Debug, ValueEnum)]
@@ -646,6 +647,7 @@ impl CliProviderType {
             Self::Gitlab => "gitlab",
             Self::Github => "github",
             Self::Outlook => "outlook",
+            Self::Vertex => "vertex",
         }
     }
 }

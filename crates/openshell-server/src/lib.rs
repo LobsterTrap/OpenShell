@@ -72,6 +72,11 @@ pub struct ServerState {
     /// set/delete operation, including the precedence check on sandbox
     /// mutations that reads global state.
     pub settings_mutex: tokio::sync::Mutex<()>,
+
+    /// Token caches for OAuth providers (e.g., Vertex AI).
+    /// Maps provider name to TokenCache with background auto-refresh.
+    /// Tokens are refreshed 5 minutes before expiry to prevent interruptions.
+    pub token_caches: tokio::sync::Mutex<HashMap<String, Arc<openshell_providers::TokenCache>>>,
 }
 
 fn is_benign_tls_handshake_failure(error: &std::io::Error) -> bool {
@@ -102,6 +107,7 @@ impl ServerState {
             ssh_connections_by_token: Mutex::new(HashMap::new()),
             ssh_connections_by_sandbox: Mutex::new(HashMap::new()),
             settings_mutex: tokio::sync::Mutex::new(()),
+            token_caches: tokio::sync::Mutex::new(HashMap::new()),
         }
     }
 }

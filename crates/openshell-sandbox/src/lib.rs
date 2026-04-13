@@ -17,6 +17,7 @@ pub mod opa;
 mod policy;
 mod process;
 pub mod procfs;
+mod providers;
 pub mod proxy;
 mod sandbox;
 mod secrets;
@@ -212,6 +213,12 @@ pub async fn run_sandbox(
 
     // Prepare filesystem: create and chown read_write directories
     prepare_filesystem(&policy)?;
+
+    // Create fake ADC file for Vertex AI if VERTEX_ADC is present
+    // This allows Claude CLI to work without requiring real credentials on disk
+    if provider_env.contains_key("VERTEX_ADC") {
+        create_fake_vertex_adc(&policy)?;
+    }
 
     // Generate ephemeral CA and TLS state for HTTPS L7 inspection.
     // The CA cert is written to disk so sandbox processes can trust it.
@@ -1445,6 +1452,100 @@ fn prepare_filesystem(policy: &SandboxPolicy) -> Result<()> {
 
 #[cfg(not(unix))]
 fn prepare_filesystem(_policy: &SandboxPolicy) -> Result<()> {
+    Ok(())
+}
+
+/// Create fake ADC credentials file for Vertex AI provider.
+///
+/// **Vertex AI + Claude CLI workaround:**
+/// - Claude CLI requires ADC credentials on disk to work with Vertex AI
+/// - We create fake ADC credentials here to satisfy Claude CLI's requirements
+/// - When Claude CLI tries to exchange these fake credentials with Google OAuth,
+///   the proxy intercepts the request (see rest.rs and proxy.rs oauth2.googleapis.com handling)
+/// - The proxy returns a fake OAuth success, allowing Claude CLI to proceed
+/// - Real OAuth tokens are injected via Authorization headers for actual API requests
+///
+/// **Why not use real credentials:**
+/// - Security: Avoid writing long-lived refresh tokens to disk in the sandbox
+/// - Simplicity: Users don't need to run `gcloud auth` inside the sandbox
+/// - Consistency: Token management is centralized in the gateway TokenCache
+///
+/// **Related code:**
+/// - OAuth interception: `crates/openshell-sandbox/src/l7/rest.rs` (relay_http_request_with_resolver)
+/// - OAuth interception: `crates/openshell-sandbox/src/proxy.rs` (handle_forward_proxy)
+/// - Token injection: `crates/openshell-sandbox/src/l7/rest.rs` (inject_oauth_header)
+#[cfg(unix)]
+fn create_fake_vertex_adc(policy: &SandboxPolicy) -> Result<()> {
+    use nix::unistd::{Group, User, chown};
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+
+    // Resolve sandbox user/group for ownership (match pattern from prepare_filesystem)
+    let user_name = match policy.process.run_as_user.as_deref() {
+        Some(name) if !name.is_empty() => Some(name),
+        _ => None,
+    };
+    let group_name = match policy.process.run_as_group.as_deref() {
+        Some(name) if !name.is_empty() => Some(name),
+        _ => None,
+    };
+
+    let uid = user_name
+        .and_then(|name| User::from_name(name).ok().flatten())
+        .map(|u| u.uid);
+    let gid = group_name
+        .and_then(|name| Group::from_name(name).ok().flatten())
+        .map(|g| g.gid);
+
+    // Get home directory from passwd entry, defaulting to /sandbox
+    let home_dir = user_name
+        .and_then(|name| User::from_name(name).ok().flatten())
+        .map(|u| u.dir)
+        .unwrap_or_else(|| std::path::PathBuf::from("/sandbox"));
+
+    let gcloud_dir = home_dir.join(".config/gcloud");
+    let adc_path = gcloud_dir.join("application_default_credentials.json");
+
+    // Create directory
+    fs::create_dir_all(&gcloud_dir).into_diagnostic()?;
+
+    // Write fake ADC file
+    let fake_adc = r#"{
+  "client_id": "fake-client-id",
+  "client_secret": "fake-client-secret",
+  "refresh_token": "fake-refresh-token",
+  "type": "authorized_user"
+}"#;
+
+    fs::write(&adc_path, fake_adc).into_diagnostic()?;
+
+    // Set file permissions to 600 (owner read/write only)
+    let mut perms = fs::metadata(&adc_path).into_diagnostic()?.permissions();
+    perms.set_mode(0o600);
+    fs::set_permissions(&adc_path, perms).into_diagnostic()?;
+
+    // Set ownership on .config parent, gcloud dir, and ADC file.
+    // create_dir_all runs as root, so intermediate directories like
+    // /sandbox/.config/ are created owned by root:root. Without chowning
+    // the .config parent, other tools (e.g. opencode) that try to create
+    // sibling directories like /sandbox/.config/opencode/ get EACCES.
+    let config_dir = home_dir.join(".config");
+    if let (Some(uid), Some(gid)) = (uid, gid) {
+        chown(&config_dir, Some(uid), Some(gid)).into_diagnostic()?;
+        chown(&gcloud_dir, Some(uid), Some(gid)).into_diagnostic()?;
+        chown(&adc_path, Some(uid), Some(gid)).into_diagnostic()?;
+    }
+
+    info!(
+        path = %adc_path.display(),
+        "Created fake Vertex ADC credentials file"
+    );
+
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn create_fake_vertex_adc(_policy: &SandboxPolicy) -> Result<()> {
     Ok(())
 }
 

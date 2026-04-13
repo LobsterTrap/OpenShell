@@ -212,11 +212,13 @@ if [[ "${CONTAINER_RUNTIME}" == "podman" ]]; then
 		ARCH_ARGS+=(--build-arg "BUILDARCH=${TARGETARCH}")
 	fi
 
-	# Filter OUTPUT_ARGS: Podman stores images locally by default (no --load)
+	# Filter OUTPUT_ARGS: Podman doesn't support --load or --push in build command
 	PODMAN_OUTPUT_ARGS=()
+	PODMAN_SHOULD_PUSH=0
 	for arg in ${OUTPUT_ARGS[@]+"${OUTPUT_ARGS[@]}"}; do
 		case "${arg}" in
 		--load) ;; # implicit in Podman
+		--push) PODMAN_SHOULD_PUSH=1 ;; # push after build
 		*) PODMAN_OUTPUT_ARGS+=("${arg}") ;;
 		esac
 	done
@@ -227,6 +229,13 @@ if [[ "${CONTAINER_RUNTIME}" == "podman" ]]; then
 		${TLS_ARGS[@]+"${TLS_ARGS[@]}"} \
 		${PODMAN_OUTPUT_ARGS[@]+"${PODMAN_OUTPUT_ARGS[@]}"} \
 		.
+
+	# Push after build if requested (Podman doesn't support --push in build)
+	if [[ "${PODMAN_SHOULD_PUSH}" == "1" && "${IS_FINAL_IMAGE}" == "1" ]]; then
+		echo "Pushing ${IMAGE_NAME}:${IMAGE_TAG}..."
+		podman_local_tls_args "${IMAGE_NAME}"
+		podman push ${PODMAN_TLS_ARGS[@]+"${PODMAN_TLS_ARGS[@]}"} "${IMAGE_NAME}:${IMAGE_TAG}"
+	fi
 else
 	# Docker: use buildx
 	docker buildx build \

@@ -9,7 +9,7 @@
 set -euo pipefail
 
 MACHINE_NAME="${PODMAN_MACHINE_NAME:-openshell}"
-MEMORY="${PODMAN_MEMORY:-8192}"
+MEMORY="${PODMAN_MEMORY:-12288}"
 CPUS="${PODMAN_CPUS:-4}"
 
 echo "=== OpenShell Podman Setup for macOS ==="
@@ -108,9 +108,9 @@ echo "Podman machine '${MACHINE_NAME}' is ready!"
 echo ""
 echo "Next steps:"
 echo "  1. Set up environment: source scripts/podman.env"
-echo "  2. Build and deploy: mise run cluster:build:full"
-echo "  3. Build CLI: cargo build --release -p openshell-cli"
-echo "  4. Install CLI: cp target/release/openshell ~/.local/bin/"
+echo "  2. Build and deploy cluster: mise run cluster:build:full"
+echo "  3. Install CLI: cargo install --path crates/openshell-cli --root ~/.local"
+echo "  4. Verify installation: openshell gateway info"
 echo ""
 echo "To make the environment persistent, add to your shell profile (~/.zshrc):"
 echo "  source $(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/scripts/podman.env"

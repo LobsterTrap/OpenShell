@@ -237,7 +237,7 @@ fn resolve_provider_route(provider: &Provider) -> Result<ResolvedProviderRoute, 
     let profile = openshell_core::inference::profile_for(&provider_type).ok_or_else(|| {
         Status::invalid_argument(format!(
             "provider '{name}' has unsupported type '{provider_type}' for cluster inference \
-                 (supported: openai, anthropic, nvidia)",
+                 (supported: openai, anthropic, nvidia, vertex)",
             name = provider.name
         ))
     })?;
@@ -250,10 +250,36 @@ fn resolve_provider_route(provider: &Provider) -> Result<ResolvedProviderRoute, 
             ))
         })?;
 
-    let base_url = find_provider_config_value(provider, profile.base_url_config_keys)
+    let mut base_url = find_provider_config_value(provider, profile.base_url_config_keys)
         .unwrap_or_else(|| profile.default_base_url.to_string())
         .trim()
         .to_string();
+
+    // For Vertex AI, construct the base URL with project ID and region
+    if provider_type == "vertex" {
+        let region = provider
+            .config
+            .get("ANTHROPIC_VERTEX_REGION")
+            .map(|s| s.as_str())
+            .unwrap_or("us-central1");
+
+        // Get project ID - if we have an OAuth token, we still need the project ID for URL construction
+        let project_id = provider
+            .credentials
+            .get("ANTHROPIC_VERTEX_PROJECT_ID")
+            .ok_or_else(|| {
+                Status::invalid_argument(format!(
+                    "provider '{}' missing ANTHROPIC_VERTEX_PROJECT_ID credential for Vertex AI URL construction",
+                    provider.name
+                ))
+            })?;
+
+        // Construct Vertex AI base URL: https://{region}-aiplatform.googleapis.com/v1/projects/{project}/locations/{region}/publishers/anthropic/models
+        base_url = format!(
+            "https://{}-aiplatform.googleapis.com/v1/projects/{}/locations/{}/publishers/anthropic/models",
+            region, project_id, region
+        );
+    }
 
     if base_url.is_empty() {
         return Err(Status::invalid_argument(format!(

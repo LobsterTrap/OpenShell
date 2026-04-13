@@ -86,6 +86,19 @@ static NVIDIA_PROFILE: InferenceProviderProfile = InferenceProviderProfile {
     default_headers: &[],
 };
 
+static VERTEX_PROFILE: InferenceProviderProfile = InferenceProviderProfile {
+    provider_type: "vertex",
+    // Base URL template - actual URL constructed at request time with project/region/model
+    default_base_url: "https://us-central1-aiplatform.googleapis.com/v1",
+    protocols: ANTHROPIC_PROTOCOLS,
+    // Look for OAuth token first, fallback to project ID (for manual config)
+    credential_key_names: &["VERTEX_OAUTH_TOKEN", "ANTHROPIC_VERTEX_PROJECT_ID"],
+    base_url_config_keys: &["VERTEX_BASE_URL", "ANTHROPIC_VERTEX_REGION"],
+    // Vertex uses OAuth Bearer tokens, not x-api-key
+    auth: AuthHeader::Bearer,
+    default_headers: &[("anthropic-version", "vertex-2023-10-16")],
+};
+
 /// Look up the inference provider profile for a given provider type.
 ///
 /// Returns `None` for provider types that don't support inference routing
@@ -95,6 +108,7 @@ pub fn profile_for(provider_type: &str) -> Option<&'static InferenceProviderProf
         "openai" => Some(&OPENAI_PROFILE),
         "anthropic" => Some(&ANTHROPIC_PROFILE),
         "nvidia" => Some(&NVIDIA_PROFILE),
+        "vertex" => Some(&VERTEX_PROFILE),
         _ => None,
     }
 }
@@ -176,6 +190,7 @@ mod tests {
         assert!(profile_for("openai").is_some());
         assert!(profile_for("anthropic").is_some());
         assert!(profile_for("nvidia").is_some());
+        assert!(profile_for("vertex").is_some());
         assert!(profile_for("OpenAI").is_some()); // case insensitive
     }
 

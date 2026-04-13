@@ -129,7 +129,7 @@ impl ProxyHandle {
     /// The proxy uses OPA for network decisions with process-identity binding
     /// via `/proc/net/tcp`. All connections are evaluated through OPA policy.
     #[allow(clippy::too_many_arguments)]
-    pub async fn start_with_bind_addr(
+    pub(crate) async fn start_with_bind_addr(
         policy: &ProxyPolicy,
         bind_addr: Option<SocketAddr>,
         opa_engine: Arc<OpaEngine>,
@@ -579,6 +579,7 @@ async fn handle_tcp_connection(
             .map(|p| p.to_string_lossy().into_owned())
             .collect(),
         secret_resolver: secret_resolver.clone(),
+        oauth_config: l7_config.as_ref().and_then(|cfg| cfg.oauth.clone()),
     };
 
     if effective_tls_skip {
@@ -1761,7 +1762,28 @@ async fn handle_forward_proxy(
     };
     let host_lc = host.to_ascii_lowercase();
 
-    // 2. Reject HTTPS — must use CONNECT for TLS
+    // 2. Provider-specific request interception (Vertex AI OAuth workaround)
+    //
+    // Check if this request should be intercepted by a provider-specific handler.
+    // Currently only used by Vertex AI to intercept OAuth token exchange for
+    // Claude CLI compatibility. See `providers::vertex` module for details.
+    //
+    // **Context:** This is the L4 forward proxy path (HTTP without TLS termination).
+    // For requests that go through L7 inspection (TLS-terminated), interception happens
+    // in rest.rs via the same vertex provider module.
+    if crate::providers::vertex::should_intercept_oauth_request(method, &host_lc, &path) {
+        crate::providers::vertex::log_oauth_interception("L4/forward-proxy");
+
+        // For L4 path, we can inject the real cached token if available
+        let access_token = std::env::var("VERTEX_ACCESS_TOKEN").ok();
+        let response =
+            crate::providers::vertex::generate_fake_oauth_response(access_token.as_deref());
+
+        respond(client, &response).await?;
+        return Ok(());
+    }
+
+    // 3. Reject HTTPS — must use CONNECT for TLS
     if scheme == "https" {
         info!(
             dst_host = %host_lc,
@@ -1896,6 +1918,7 @@ async fn handle_forward_proxy(
                 .map(|p| p.to_string_lossy().into_owned())
                 .collect(),
             secret_resolver: secret_resolver.clone(),
+            oauth_config: l7_config.oauth.clone(),
         };
 
         let (target_path, query_params) = crate::l7::rest::parse_target_query(&path)

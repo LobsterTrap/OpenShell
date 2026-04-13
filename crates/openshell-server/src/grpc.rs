@@ -929,18 +929,25 @@ impl OpenShell for OpenShellService {
             .spec
             .ok_or_else(|| Status::internal("sandbox has no spec"))?;
 
-        let environment =
-            resolve_provider_environment(self.state.store.as_ref(), &spec.providers).await?;
+        let (environment, metadata) = resolve_provider_environment(
+            self.state.store.as_ref(),
+            &self.state.token_caches,
+            &spec.providers,
+            spec.policy.as_ref(),
+        )
+        .await?;
 
         info!(
             sandbox_id = %sandbox_id,
             provider_count = spec.providers.len(),
             env_count = environment.len(),
+            metadata_count = metadata.len(),
             "GetSandboxProviderEnvironment request completed successfully"
         );
 
         Ok(Response::new(GetSandboxProviderEnvironmentResponse {
             environment,
+            oauth_metadata: metadata,
         }))
     }
 
@@ -2515,7 +2522,7 @@ async fn require_no_global_policy(state: &ServerState) -> Result<(), Status> {
 }
 
 async fn merge_chunk_into_policy(
-    store: &crate::persistence::Store,
+    store: &Store,
     sandbox_id: &str,
     chunk: &DraftChunkRecord,
 ) -> Result<(i64, String), Status> {
@@ -3237,7 +3244,7 @@ fn validate_sandbox_template(tmpl: &SandboxTemplate) -> Result<(), Status> {
 
 /// Validate a `map<string, string>` field: entry count, key length, value length.
 fn validate_string_map(
-    map: &std::collections::HashMap<String, String>,
+    map: &HashMap<String, String>,
     max_entries: usize,
     max_key_len: usize,
     max_value_len: usize,
@@ -3640,15 +3647,48 @@ fn build_remote_exec_command(req: &ExecSandboxRequest) -> Result<String, String>
 /// collects credential key-value pairs. Returns a map of environment variables
 /// to inject into the sandbox. When duplicate keys appear across providers, the
 /// first provider's value wins.
+///
+/// **OAuth Token Auto-Refresh:**
+/// - Detects OAuth credential keys (VERTEX_ADC, etc.)
+/// - Creates/reuses TokenCache for OAuth token management with auto-refresh
+/// - Returns OAuth tokens that are auto-refreshed every ~55 minutes
+/// - Returns metadata with expiry time and auto-refresh configuration
 async fn resolve_provider_environment(
-    store: &crate::persistence::Store,
+    store: &Store,
+    token_caches: &tokio::sync::Mutex<HashMap<String, Arc<openshell_providers::TokenCache>>>,
     provider_names: &[String],
-) -> Result<std::collections::HashMap<String, String>, Status> {
+    policy: Option<&openshell_core::proto::SandboxPolicy>,
+) -> Result<
+    (
+        HashMap<String, String>,
+        HashMap<String, openshell_core::proto::OAuthCredentialMetadata>,
+    ),
+    Status,
+> {
+    use openshell_core::proto::OAuthCredentialMetadata;
+
     if provider_names.is_empty() {
-        return Ok(std::collections::HashMap::new());
+        return Ok((HashMap::new(), HashMap::new()));
     }
 
-    let mut env = std::collections::HashMap::new();
+    // Extract OAuth settings from policy (use defaults if not specified)
+    let (auto_refresh, refresh_margin_seconds, _max_lifetime_seconds) = policy
+        .and_then(|p| p.oauth_credentials.as_ref())
+        .map(|oauth| {
+            (
+                oauth.auto_refresh,
+                oauth.refresh_margin_seconds,
+                oauth.max_lifetime_seconds,
+            )
+        })
+        .unwrap_or((
+            true,  // Default: auto-refresh enabled
+            300,   // Default: 5 minutes before expiry
+            86400, // Default: 24 hours max lifetime
+        ));
+
+    let mut env = HashMap::new();
+    let mut metadata = HashMap::new();
 
     for name in provider_names {
         let provider = store
@@ -3659,7 +3699,83 @@ async fn resolve_provider_environment(
 
         for (key, value) in &provider.credentials {
             if is_valid_env_key(key) {
-                env.entry(key.clone()).or_insert_with(|| value.clone());
+                // Check if this credential should use OAuth token auto-refresh
+                if should_use_token_cache(&provider.r#type, key) {
+                    match get_or_create_token_cache(
+                        token_caches,
+                        name,
+                        &provider.r#type,
+                        key,
+                        value,
+                        auto_refresh,
+                        refresh_margin_seconds,
+                    )
+                    .await
+                    {
+                        Ok(cache) => {
+                            match cache.get_token_with_expiry(&provider.r#type).await {
+                                Ok((oauth_token, expires_in)) => {
+                                    // Trim token to remove trailing newlines that break HTTP headers
+                                    let oauth_token = oauth_token.trim().to_string();
+
+                                    // For Vertex ADC: keep original JSON, create ACCESS_TOKEN with token
+                                    // Claude CLI needs the JSON file for ADC parsing
+                                    if provider.r#type == "vertex" && key == "VERTEX_ADC" {
+                                        // Keep original ADC JSON (supervisor needs it to create fake ADC file)
+                                        env.entry(key.clone()).or_insert_with(|| value.clone());
+                                        // Add OAuth token as VERTEX_ACCESS_TOKEN for proxy injection
+                                        env.entry("VERTEX_ACCESS_TOKEN".to_string())
+                                            .or_insert(oauth_token.clone());
+                                    } else {
+                                        // For other credentials, replace with OAuth token
+                                        env.entry(key.clone()).or_insert(oauth_token.clone());
+                                    }
+
+                                    // Get config values from provider (with defaults)
+                                    let auto_refresh = provider
+                                        .config
+                                        .get("auto_refresh")
+                                        .and_then(|v| v.parse::<bool>().ok())
+                                        .unwrap_or(false); // Default: disabled
+
+                                    let refresh_margin_seconds = provider
+                                        .config
+                                        .get("refresh_margin_seconds")
+                                        .and_then(|v| v.parse::<i64>().ok())
+                                        .unwrap_or(300); // Default: 5 minutes
+
+                                    let max_lifetime_seconds = provider
+                                        .config
+                                        .get("max_lifetime_seconds")
+                                        .and_then(|v| v.parse::<i64>().ok())
+                                        .unwrap_or(86400); // Default: 24 hours
+
+                                    metadata.insert(
+                                        key.clone(),
+                                        OAuthCredentialMetadata {
+                                            expires_in: expires_in as i64,
+                                            auto_refresh,
+                                            refresh_margin_seconds,
+                                            max_lifetime_seconds,
+                                        },
+                                    );
+                                }
+                                Err(e) => {
+                                    return Err(Status::internal(format!(
+                                        "Failed to get OAuth token from cache: {e}"
+                                    )));
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            return Err(Status::internal(format!(
+                                "Failed to create token cache: {e}"
+                            )));
+                        }
+                    }
+                } else {
+                    env.entry(key.clone()).or_insert_with(|| value.clone());
+                }
             } else {
                 warn!(
                     provider_name = %name,
@@ -3668,9 +3784,148 @@ async fn resolve_provider_environment(
                 );
             }
         }
+
+        // Also inject config values as environment variables
+        // (e.g., ANTHROPIC_VERTEX_REGION from provider.config)
+        for (key, value) in &provider.config {
+            // Skip OAuth-specific config keys (these are metadata, not env vars)
+            if matches!(
+                key.as_str(),
+                "auto_refresh" | "refresh_margin_seconds" | "max_lifetime_seconds"
+            ) {
+                continue;
+            }
+
+            if is_valid_env_key(key) {
+                env.entry(key.clone()).or_insert_with(|| value.clone());
+            } else {
+                warn!(
+                    provider_name = %name,
+                    key = %key,
+                    "skipping config with invalid env var key"
+                );
+            }
+        }
     }
 
-    Ok(env)
+    Ok((env, metadata))
+}
+
+/// Determine if a credential should use TokenCache for OAuth auto-refresh.
+///
+/// This function identifies OAuth credentials that need token exchange and
+/// auto-refresh. Add new provider types and credential keys here to enable
+/// auto-refresh for additional OAuth providers.
+///
+/// **Current supported providers:**
+/// - **Vertex AI**: VERTEX_ADC (Google Application Default Credentials)
+///
+/// **Future providers (examples):**
+/// - **AWS Bedrock**: AWS_CREDENTIALS → STS token exchange
+/// - **Azure OpenAI**: AZURE_CLIENT_SECRET → Azure AD token exchange
+/// - **GitHub**: GITHUB_APP_PRIVATE_KEY → GitHub App JWT + installation token
+fn should_use_token_cache(provider_type: &str, credential_key: &str) -> bool {
+    matches!(
+        (provider_type, credential_key),
+        ("vertex", "VERTEX_ADC") // Add more OAuth providers here
+                                 // | ("bedrock", "AWS_CREDENTIALS")
+                                 // | ("azure", "AZURE_CLIENT_SECRET")
+                                 // | ("github-app", "GITHUB_APP_PRIVATE_KEY")
+    )
+}
+
+/// Get or create a TokenCache for an OAuth provider.
+///
+/// This function ensures that only one TokenCache exists per provider, stored in
+/// ServerState. The TokenCache remains alive for the lifetime of the gateway,
+/// allowing its background auto-refresh task to run indefinitely.
+///
+/// **Benefits:**
+/// - Single TokenCache per provider (no duplicate refresh tasks)
+/// - Background refresh runs every 55 minutes (for 1-hour tokens)
+/// - Tokens stay fresh without sandbox restarts
+/// - Multiple sandboxes share the same cached token
+///
+/// **Supports:**
+/// - Vertex AI (ADC → OAuth token exchange)
+/// - Future: AWS Bedrock, Azure OpenAI, GitHub Apps, etc.
+async fn get_or_create_token_cache(
+    token_caches: &tokio::sync::Mutex<HashMap<String, Arc<openshell_providers::TokenCache>>>,
+    provider_name: &str,
+    provider_type: &str,
+    credential_key: &str,
+    credential_value: &str,
+    auto_refresh: bool,
+    refresh_margin_seconds: i64,
+) -> Result<Arc<openshell_providers::TokenCache>, String> {
+    use openshell_providers::{DatabaseStore, ProviderPlugin, TokenCache};
+    use std::sync::Arc as StdArc;
+
+    // Use a composite key for the cache: provider_name + credential_key
+    // This allows multiple OAuth credentials per provider if needed
+    let cache_key = format!("{provider_name}:{credential_key}");
+
+    let mut caches = token_caches.lock().await;
+
+    // Check if cache already exists
+    if let Some(cache) = caches.get(&cache_key) {
+        tracing::debug!(
+            provider = provider_name,
+            credential_key = credential_key,
+            "reusing existing token cache"
+        );
+        return Ok(cache.clone());
+    }
+
+    // Create new TokenCache
+    tracing::info!(
+        provider = provider_name,
+        provider_type = provider_type,
+        credential_key = credential_key,
+        "creating new token cache with auto-refresh"
+    );
+
+    // Create provider plugin based on provider type
+    let provider_plugin: StdArc<dyn ProviderPlugin> = match provider_type {
+        "vertex" => {
+            // Validate ADC JSON
+            let _: serde_json::Value = serde_json::from_str(credential_value)
+                .map_err(|e| format!("Invalid ADC JSON for Vertex: {e}"))?;
+            StdArc::new(openshell_providers::vertex::VertexProvider::new())
+        }
+        // Future providers can be added here:
+        // "bedrock" => Arc::new(BedrockProvider::new()),
+        // "azure" => Arc::new(AzureProvider::new()),
+        _ => {
+            return Err(format!(
+                "Unsupported OAuth provider type for token cache: {provider_type}"
+            ));
+        }
+    };
+
+    // Create DatabaseStore with the credential
+    let mut creds = HashMap::new();
+    creds.insert(credential_key.to_string(), credential_value.to_string());
+    let store = StdArc::new(DatabaseStore::new(creds));
+
+    // Create TokenCache with policy-configured refresh settings
+    tracing::info!(
+        provider = provider_name,
+        auto_refresh = auto_refresh,
+        refresh_margin_seconds = refresh_margin_seconds,
+        "creating token cache with policy-configured settings"
+    );
+    let cache = StdArc::new(TokenCache::new(
+        provider_plugin,
+        store,
+        refresh_margin_seconds,
+        auto_refresh,
+    ));
+
+    // Store in ServerState to keep it alive
+    caches.insert(cache_key, cache.clone());
+
+    Ok(cache)
 }
 
 fn is_valid_env_key(key: &str) -> bool {
@@ -4138,10 +4393,7 @@ fn redact_provider_credentials(mut provider: Provider) -> Provider {
     provider
 }
 
-async fn create_provider_record(
-    store: &crate::persistence::Store,
-    mut provider: Provider,
-) -> Result<Provider, Status> {
+async fn create_provider_record(store: &Store, mut provider: Provider) -> Result<Provider, Status> {
     if provider.name.is_empty() {
         provider.name = generate_name();
     }
@@ -4176,10 +4428,7 @@ async fn create_provider_record(
     Ok(redact_provider_credentials(provider))
 }
 
-async fn get_provider_record(
-    store: &crate::persistence::Store,
-    name: &str,
-) -> Result<Provider, Status> {
+async fn get_provider_record(store: &Store, name: &str) -> Result<Provider, Status> {
     if name.is_empty() {
         return Err(Status::invalid_argument("name is required"));
     }
@@ -4193,7 +4442,7 @@ async fn get_provider_record(
 }
 
 async fn list_provider_records(
-    store: &crate::persistence::Store,
+    store: &Store,
     limit: u32,
     offset: u32,
 ) -> Result<Vec<Provider>, Status> {
@@ -4218,9 +4467,9 @@ async fn list_provider_records(
 /// - Otherwise, upsert all incoming entries into `existing`.
 /// - Entries with an empty-string value are removed (delete semantics).
 fn merge_map(
-    mut existing: std::collections::HashMap<String, String>,
-    incoming: std::collections::HashMap<String, String>,
-) -> std::collections::HashMap<String, String> {
+    mut existing: HashMap<String, String>,
+    incoming: HashMap<String, String>,
+) -> HashMap<String, String> {
     if incoming.is_empty() {
         return existing;
     }
@@ -4234,10 +4483,7 @@ fn merge_map(
     existing
 }
 
-async fn update_provider_record(
-    store: &crate::persistence::Store,
-    provider: Provider,
-) -> Result<Provider, Status> {
+async fn update_provider_record(store: &Store, provider: Provider) -> Result<Provider, Status> {
     if provider.name.is_empty() {
         return Err(Status::invalid_argument("provider.name is required"));
     }
@@ -4278,10 +4524,7 @@ async fn update_provider_record(
     Ok(redact_provider_credentials(updated))
 }
 
-async fn delete_provider_record(
-    store: &crate::persistence::Store,
-    name: &str,
-) -> Result<bool, Status> {
+async fn delete_provider_record(store: &Store, name: &str) -> Result<bool, Status> {
     if name.is_empty() {
         return Err(Status::invalid_argument("name is required"));
     }
@@ -4872,8 +5115,12 @@ mod tests {
     #[tokio::test]
     async fn resolve_provider_env_empty_list_returns_empty() {
         let store = Store::connect("sqlite::memory:").await.unwrap();
-        let result = resolve_provider_environment(&store, &[]).await.unwrap();
-        assert!(result.is_empty());
+        let token_caches = tokio::sync::Mutex::new(HashMap::new());
+        let (env, metadata) = resolve_provider_environment(&store, &token_caches, &[], None)
+            .await
+            .unwrap();
+        assert!(env.is_empty());
+        assert!(metadata.is_empty());
     }
 
     #[tokio::test]
@@ -4896,22 +5143,33 @@ mod tests {
             .collect(),
         };
         create_provider_record(&store, provider).await.unwrap();
+        let token_caches = tokio::sync::Mutex::new(HashMap::new());
 
-        let result = resolve_provider_environment(&store, &["claude-local".to_string()])
-            .await
-            .unwrap();
-        assert_eq!(result.get("ANTHROPIC_API_KEY"), Some(&"sk-abc".to_string()));
-        assert_eq!(result.get("CLAUDE_API_KEY"), Some(&"sk-abc".to_string()));
-        // Config values should NOT be injected.
-        assert!(!result.contains_key("endpoint"));
+        let (env, _metadata) = resolve_provider_environment(
+            &store,
+            &token_caches,
+            &["claude-local".to_string()],
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(env.get("ANTHROPIC_API_KEY"), Some(&"sk-abc".to_string()));
+        assert_eq!(env.get("CLAUDE_API_KEY"), Some(&"sk-abc".to_string()));
+        // Config values are injected as environment variables
+        assert_eq!(
+            env.get("endpoint"),
+            Some(&"https://api.anthropic.com".to_string())
+        );
     }
 
     #[tokio::test]
     async fn resolve_provider_env_unknown_name_returns_error() {
         let store = Store::connect("sqlite::memory:").await.unwrap();
-        let err = resolve_provider_environment(&store, &["nonexistent".to_string()])
-            .await
-            .unwrap_err();
+        let token_caches = tokio::sync::Mutex::new(HashMap::new());
+        let err =
+            resolve_provider_environment(&store, &token_caches, &["nonexistent".to_string()], None)
+                .await
+                .unwrap_err();
         assert_eq!(err.code(), Code::FailedPrecondition);
         assert!(err.message().contains("nonexistent"));
     }
@@ -4933,13 +5191,19 @@ mod tests {
             config: HashMap::new(),
         };
         create_provider_record(&store, provider).await.unwrap();
+        let token_caches = tokio::sync::Mutex::new(HashMap::new());
 
-        let result = resolve_provider_environment(&store, &["test-provider".to_string()])
-            .await
-            .unwrap();
-        assert_eq!(result.get("VALID_KEY"), Some(&"value".to_string()));
-        assert!(!result.contains_key("nested.api_key"));
-        assert!(!result.contains_key("bad-key"));
+        let (env, _metadata) = resolve_provider_environment(
+            &store,
+            &token_caches,
+            &["test-provider".to_string()],
+            None,
+        )
+        .await
+        .unwrap();
+        assert_eq!(env.get("VALID_KEY"), Some(&"value".to_string()));
+        assert!(!env.contains_key("nested.api_key"));
+        assert!(!env.contains_key("bad-key"));
     }
 
     #[tokio::test]
@@ -4974,15 +5238,18 @@ mod tests {
         )
         .await
         .unwrap();
+        let token_caches = tokio::sync::Mutex::new(HashMap::new());
 
-        let result = resolve_provider_environment(
+        let (env, _metadata) = resolve_provider_environment(
             &store,
+            &token_caches,
             &["claude-local".to_string(), "gitlab-local".to_string()],
+            None,
         )
         .await
         .unwrap();
-        assert_eq!(result.get("ANTHROPIC_API_KEY"), Some(&"sk-abc".to_string()));
-        assert_eq!(result.get("GITLAB_TOKEN"), Some(&"glpat-xyz".to_string()));
+        assert_eq!(env.get("ANTHROPIC_API_KEY"), Some(&"sk-abc".to_string()));
+        assert_eq!(env.get("GITLAB_TOKEN"), Some(&"glpat-xyz".to_string()));
     }
 
     #[tokio::test]
@@ -5017,14 +5284,17 @@ mod tests {
         )
         .await
         .unwrap();
+        let token_caches = tokio::sync::Mutex::new(HashMap::new());
 
-        let result = resolve_provider_environment(
+        let (env, _metadata) = resolve_provider_environment(
             &store,
+            &token_caches,
             &["provider-a".to_string(), "provider-b".to_string()],
+            None,
         )
         .await
         .unwrap();
-        assert_eq!(result.get("SHARED_KEY"), Some(&"first-value".to_string()));
+        assert_eq!(env.get("SHARED_KEY"), Some(&"first-value".to_string()));
     }
 
     /// Simulates the handler flow: persist a sandbox with providers, then resolve
@@ -5075,9 +5345,11 @@ mod tests {
             .unwrap()
             .unwrap();
         let spec = loaded.spec.unwrap();
-        let env = resolve_provider_environment(&store, &spec.providers)
-            .await
-            .unwrap();
+        let token_caches = tokio::sync::Mutex::new(HashMap::new());
+        let (env, _metadata) =
+            resolve_provider_environment(&store, &token_caches, &spec.providers, None)
+                .await
+                .unwrap();
 
         assert_eq!(env.get("ANTHROPIC_API_KEY"), Some(&"sk-test".to_string()));
     }
@@ -5106,11 +5378,14 @@ mod tests {
             .unwrap()
             .unwrap();
         let spec = loaded.spec.unwrap();
-        let env = resolve_provider_environment(&store, &spec.providers)
-            .await
-            .unwrap();
+        let token_caches = tokio::sync::Mutex::new(HashMap::new());
+        let (env, metadata) =
+            resolve_provider_environment(&store, &token_caches, &spec.providers, None)
+                .await
+                .unwrap();
 
         assert!(env.is_empty());
+        assert!(metadata.is_empty());
     }
 
     /// Handler returns not-found when sandbox doesn't exist.

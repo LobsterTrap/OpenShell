@@ -703,6 +703,12 @@ fn proto_to_opa_data_json(proto: &ProtoSandboxPolicy) -> String {
                     if !e.allowed_ips.is_empty() {
                         ep["allowed_ips"] = e.allowed_ips.clone().into();
                     }
+                    if let Some(oauth) = &e.oauth {
+                        ep["oauth"] = serde_json::json!({
+                            "token_env_var": oauth.token_env_var,
+                            "header_format": oauth.header_format,
+                        });
+                    }
                     ep
                 })
                 .collect();
@@ -802,6 +808,7 @@ mod tests {
                 run_as_group: "sandbox".to_string(),
             }),
             network_policies,
+            oauth_credentials: None,
         }
     }
 
@@ -1639,6 +1646,7 @@ process:
                 run_as_group: "sandbox".to_string(),
             }),
             network_policies,
+            oauth_credentials: None,
         };
 
         let engine = OpaEngine::from_proto(&proto).expect("engine from proto");
@@ -2255,6 +2263,7 @@ process:
                 run_as_group: "sandbox".to_string(),
             }),
             network_policies,
+            oauth_credentials: None,
         };
         let engine = OpaEngine::from_proto(&proto).expect("Failed to create engine from proto");
 
@@ -2485,6 +2494,7 @@ network_policies:
                 run_as_group: "sandbox".to_string(),
             }),
             network_policies,
+            oauth_credentials: None,
         };
         let engine = OpaEngine::from_proto(&proto).unwrap();
         // Port 443
