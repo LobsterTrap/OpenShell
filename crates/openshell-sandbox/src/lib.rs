@@ -1524,8 +1524,14 @@ fn create_fake_vertex_adc(policy: &SandboxPolicy) -> Result<()> {
     perms.set_mode(0o600);
     fs::set_permissions(&adc_path, perms).into_diagnostic()?;
 
-    // Set ownership on directory and file
+    // Set ownership on .config parent, gcloud dir, and ADC file.
+    // create_dir_all runs as root, so intermediate directories like
+    // /sandbox/.config/ are created owned by root:root. Without chowning
+    // the .config parent, other tools (e.g. opencode) that try to create
+    // sibling directories like /sandbox/.config/opencode/ get EACCES.
+    let config_dir = home_dir.join(".config");
     if let (Some(uid), Some(gid)) = (uid, gid) {
+        chown(&config_dir, Some(uid), Some(gid)).into_diagnostic()?;
         chown(&gcloud_dir, Some(uid), Some(gid)).into_diagnostic()?;
         chown(&adc_path, Some(uid), Some(gid)).into_diagnostic()?;
     }
