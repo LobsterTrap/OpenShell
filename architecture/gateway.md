@@ -128,6 +128,7 @@ All configuration is via CLI flags with environment variable fallbacks. The `--d
 | `--sandbox-ssh-port` | `OPENSHELL_SANDBOX_SSH_PORT` | `2222` | SSH listen port inside sandbox pods |
 | `--ssh-handshake-secret` | `OPENSHELL_SSH_HANDSHAKE_SECRET` | None | Shared HMAC-SHA256 secret for gateway-to-sandbox handshake |
 | `--ssh-handshake-skew-secs` | `OPENSHELL_SSH_HANDSHAKE_SKEW_SECS` | `300` | Allowed clock skew (seconds) for SSH handshake timestamps |
+| — | `OPENSHELL_CONTAINER_REGISTRY` | None | Default container registry for image pulls. When set, all images that don't specify an explicit registry are pulled from this endpoint instead of `docker.io`. Useful when Docker Hub is blocked by corporate firewalls, air-gapped networks, or rate limiting. |
 
 ## Shared State
 
