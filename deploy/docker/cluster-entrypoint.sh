@@ -282,6 +282,21 @@ REGEOF
 REGEOF
 	fi
 
+	# Mirror docker.io to an alternative registry for environments where
+	# Docker Hub is inaccessible (corporate firewalls, air-gapped networks,
+	# rate limiting, etc.). Without this, k3s system images such as
+	# rancher/mirrored-pause fail to pull and no pods can start.
+	if [ -n "${OPENSHELL_DOCKERIO_MIRROR:-}" ]; then
+		echo "Adding docker.io mirror: ${OPENSHELL_DOCKERIO_MIRROR}"
+		cat >>"$REGISTRIES_YAML" <<REGEOF
+  "docker.io":
+    endpoint:
+      - "${OPENSHELL_DOCKERIO_MIRROR}"
+REGEOF
+	else
+		echo "Info: OPENSHELL_DOCKERIO_MIRROR not set; unqualified image pulls will use docker.io directly"
+	fi
+
 	if [ -n "${REGISTRY_USERNAME:-}" ] && [ -n "${REGISTRY_PASSWORD:-}" ]; then
 		cat >>"$REGISTRIES_YAML" <<REGEOF
 
@@ -318,7 +333,22 @@ REGEOF
 		fi
 	fi
 else
-	echo "Warning: REGISTRY_HOST not set; skipping registry config"
+	echo "Warning: REGISTRY_HOST not set; skipping OpenShell component registry mirror config"
+fi
+
+# Mirror docker.io independently of REGISTRY_HOST — even without a
+# component registry configured, k3s still needs to pull system images
+# (e.g. rancher/mirrored-pause) and will fail if docker.io is unreachable.
+if [ -n "${OPENSHELL_DOCKERIO_MIRROR:-}" ] && [ ! -f "$REGISTRIES_YAML" ]; then
+	echo "Configuring docker.io mirror: ${OPENSHELL_DOCKERIO_MIRROR}"
+	cat >"$REGISTRIES_YAML" <<REGEOF
+mirrors:
+  "docker.io":
+    endpoint:
+      - "${OPENSHELL_DOCKERIO_MIRROR}"
+REGEOF
+elif [ ! -f "$REGISTRIES_YAML" ]; then
+	echo "Info: OPENSHELL_DOCKERIO_MIRROR not set; unqualified image pulls will use docker.io directly"
 fi
 
 # Copy bundled Helm chart tarballs to the k3s static charts directory.
