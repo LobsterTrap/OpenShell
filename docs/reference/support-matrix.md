@@ -54,6 +54,7 @@ To override the default image references, set the following environment variable
 | ------------------------------ | --------------------------------------------------- |
 | `OPENSHELL_CLUSTER_IMAGE`      | Override the cluster image reference.               |
 | `OPENSHELL_COMMUNITY_REGISTRY` | Override the registry for community sandbox images. |
+| `OPENSHELL_DOCKERIO_MIRROR`    | Mirror endpoint for docker.io (e.g. `https://mirror.gcr.io`). Required when Docker Hub is inaccessible. |
 
 ## Kernel Requirements
 

@@ -128,6 +128,7 @@ All configuration is via CLI flags with environment variable fallbacks. The `--d
 | `--sandbox-ssh-port` | `OPENSHELL_SANDBOX_SSH_PORT` | `2222` | SSH listen port inside sandbox pods |
 | `--ssh-handshake-secret` | `OPENSHELL_SSH_HANDSHAKE_SECRET` | None | Shared HMAC-SHA256 secret for gateway-to-sandbox handshake |
 | `--ssh-handshake-skew-secs` | `OPENSHELL_SSH_HANDSHAKE_SKEW_SECS` | `300` | Allowed clock skew (seconds) for SSH handshake timestamps |
+| — | `OPENSHELL_DOCKERIO_MIRROR` | None | Mirror endpoint for docker.io (e.g. `https://mirror.gcr.io`). Used when Docker Hub is blocked by corporate firewalls or air-gapped networks. Without this, k3s system images such as `rancher/mirrored-pause` fail to pull and no pods can start. |
 
 ## Shared State
 

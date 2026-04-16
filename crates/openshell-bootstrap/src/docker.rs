@@ -842,6 +842,11 @@ pub async fn ensure_container(
     if let Some(endpoint) = registry_endpoint {
         env_vars.push(format!("REGISTRY_ENDPOINT={endpoint}"));
     }
+    // Docker Hub mirror for environments where docker.io is blocked
+    // (corporate firewalls, air-gapped networks, rate limiting, etc.).
+    if let Some(mirror) = env_non_empty("OPENSHELL_DOCKERIO_MIRROR") {
+        env_vars.push(format!("OPENSHELL_DOCKERIO_MIRROR={mirror}"));
+    }
     if let Some(password) = effective_password {
         // Default to __token__ when only a password/token is provided.
         let username = effective_username.unwrap_or_else(|| "__token__".to_string());
