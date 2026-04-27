@@ -263,7 +263,7 @@ fn diagnose_image_pull_auth_failure(_gateway_name: &str) -> GatewayFailureDiagno
         recovery_steps: vec![
             RecoveryStep::with_command(
                 "Verify the image exists and you have access",
-                "docker pull ghcr.io/nvidia/openshell/cluster:latest",
+                "docker pull ghcr.io/lobstertrap/openshell/cluster:latest",
             ),
             RecoveryStep::new(
                 "If using a private registry, set OPENSHELL_REGISTRY_USERNAME and OPENSHELL_REGISTRY_TOKEN \

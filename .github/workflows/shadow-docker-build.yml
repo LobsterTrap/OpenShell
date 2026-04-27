@@ -38,7 +38,7 @@ jobs:
             runner: linux-arm64-cpu8
     runs-on: ${{ matrix.runner }}
     container:
-      image: ghcr.io/nvidia/openshell/ci:latest
+      image: ghcr.io/lobstertrap/openshell/ci:latest
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}

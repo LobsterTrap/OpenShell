@@ -94,7 +94,7 @@ pub(crate) fn test_sandbox_context() -> SandboxContext {
     SandboxContext {
         sandbox_id: "sandbox-abc123".to_string(),
         sandbox_name: "my-sandbox".to_string(),
-        container_image: "ghcr.io/openshell/sandbox:latest".to_string(),
+        container_image: "ghcr.io/lobstertrap/openshell/sandbox:latest".to_string(),
         hostname: "sandbox-abc123".to_string(),
         product_version: "0.1.0".to_string(),
         proxy_ip: "10.42.0.1".parse().unwrap(),

@@ -40,7 +40,7 @@ jobs:
       # while arm64 got 575/1064.)
       SCCACHE_GHA_VERSION: ${{ matrix.runner }}
     container:
-      image: ghcr.io/nvidia/openshell/ci:latest
+      image: ghcr.io/lobstertrap/openshell/ci:latest
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}

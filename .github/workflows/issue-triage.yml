@@ -55,6 +55,6 @@ jobs:
                 '',
                 'OpenShell is an agent-first project - please point your coding agent at the repo and have it diagnose this before we triage. Your agent can load skills like `debug-openshell-cluster`, `debug-inference`, `openshell-cli`, and `generate-sandbox-policy`.',
                 '',
-                'See [CONTRIBUTING.md](https://github.com/NVIDIA/OpenShell/blob/main/CONTRIBUTING.md#before-you-open-an-issue) for the full workflow.',
+                'See [CONTRIBUTING.md](https://github.com/lobstertrap/openshell/blob/main/CONTRIBUTING.md#before-you-open-an-issue) for the full workflow.',
               ].join('\n')
             });

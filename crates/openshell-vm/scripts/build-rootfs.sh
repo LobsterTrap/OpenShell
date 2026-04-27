@@ -755,7 +755,7 @@ done
 echo "    Pre-unpacking container images..."
 for img in \
     "ghcr.io/nvidia/openshell-community/sandboxes/base:latest" \
-    "ghcr.io/nvidia/openshell/gateway:latest"; do
+    "ghcr.io/lobstertrap/openshell/gateway:latest"; do
     if vm_exec k3s ctr -n k8s.io images ls -q 2>/dev/null | grep -qF "$img"; then
         echo "      unpacking: $img"
         vm_exec k3s ctr -n k8s.io run --rm "$img" "pre-unpack-$(date +%s)" true 2>/dev/null || true

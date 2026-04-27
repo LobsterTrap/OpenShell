@@ -25,7 +25,7 @@ else
   IMAGE_TAG=dev
 fi
 ENV_FILE=.env
-PUBLISHED_IMAGE_REPO_BASE_DEFAULT=ghcr.io/nvidia/openshell
+PUBLISHED_IMAGE_REPO_BASE_DEFAULT=ghcr.io/lobstertrap/openshell
 LOCAL_REGISTRY_CONTAINER=openshell-local-registry
 LOCAL_REGISTRY_ADDR=127.0.0.1:5000
 

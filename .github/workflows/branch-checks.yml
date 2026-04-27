@@ -17,7 +17,7 @@ jobs:
     name: License Headers
     runs-on: build-amd64
     container:
-      image: ghcr.io/nvidia/openshell/ci:latest
+      image: ghcr.io/lobstertrap/openshell/ci:latest
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -38,7 +38,7 @@ jobs:
         runner: [build-amd64, build-arm64]
     runs-on: ${{ matrix.runner }}
     container:
-      image: ghcr.io/nvidia/openshell/ci:latest
+      image: ghcr.io/lobstertrap/openshell/ci:latest
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -82,7 +82,7 @@ jobs:
         runner: [build-amd64, build-arm64]
     runs-on: ${{ matrix.runner }}
     container:
-      image: ghcr.io/nvidia/openshell/ci:latest
+      image: ghcr.io/lobstertrap/openshell/ci:latest
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -105,7 +105,7 @@ jobs:
     name: Markdown
     runs-on: build-amd64
     container:
-      image: ghcr.io/nvidia/openshell/ci:latest
+      image: ghcr.io/lobstertrap/openshell/ci:latest
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}

@@ -23,7 +23,7 @@ pub struct Container {
 /// OCSF Image object.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Image {
-    /// Image name (e.g., "ghcr.io/openshell/sandbox:latest").
+    /// Image name (e.g., "ghcr.io/lobstertrap/openshell/sandbox:latest").
     pub name: String,
 }
 
@@ -37,14 +37,14 @@ mod tests {
             name: "my-sandbox".to_string(),
             uid: Some("sandbox-abc123".to_string()),
             image: Some(Image {
-                name: "ghcr.io/openshell/sandbox:latest".to_string(),
+                name: "ghcr.io/lobstertrap/openshell/sandbox:latest".to_string(),
             }),
         };
 
         let json = serde_json::to_value(&container).unwrap();
         assert_eq!(json["name"], "my-sandbox");
         assert_eq!(json["uid"], "sandbox-abc123");
-        assert_eq!(json["image"]["name"], "ghcr.io/openshell/sandbox:latest");
+        assert_eq!(json["image"]["name"], "ghcr.io/lobstertrap/openshell/sandbox:latest");
     }
 
     #[test]

@@ -22,7 +22,7 @@ jobs:
     runs-on: build-amd64
     timeout-minutes: 5
     container:
-      image: ghcr.io/nvidia/openshell/ci:latest
+      image: ghcr.io/lobstertrap/openshell/ci:latest
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -87,7 +87,7 @@ jobs:
       - name: Tag images as dev
         run: |
           set -euo pipefail
-          REGISTRY="ghcr.io/nvidia/openshell"
+          REGISTRY="ghcr.io/lobstertrap/openshell"
           for component in gateway supervisor cluster; do
             echo "Tagging ${REGISTRY}/${component}:${{ github.sha }} as dev..."
             docker buildx imagetools create \
@@ -115,7 +115,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
     container:
-      image: ghcr.io/nvidia/openshell/ci:latest
+      image: ghcr.io/lobstertrap/openshell/ci:latest
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -161,7 +161,7 @@ jobs:
     runs-on: build-amd64
     timeout-minutes: 120
     container:
-      image: ghcr.io/nvidia/openshell/ci:latest
+      image: ghcr.io/lobstertrap/openshell/ci:latest
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -225,7 +225,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     container:
-      image: ghcr.io/nvidia/openshell/ci:latest
+      image: ghcr.io/lobstertrap/openshell/ci:latest
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -326,7 +326,7 @@ jobs:
     runs-on: build-amd64
     timeout-minutes: 60
     container:
-      image: ghcr.io/nvidia/openshell/ci:latest
+      image: ghcr.io/lobstertrap/openshell/ci:latest
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -398,7 +398,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     container:
-      image: ghcr.io/nvidia/openshell/ci:latest
+      image: ghcr.io/lobstertrap/openshell/ci:latest
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -473,7 +473,7 @@ jobs:
     runs-on: build-amd64
     timeout-minutes: 60
     container:
-      image: ghcr.io/nvidia/openshell/ci:latest
+      image: ghcr.io/lobstertrap/openshell/ci:latest
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -549,7 +549,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 60
     container:
-      image: ghcr.io/nvidia/openshell/ci:latest
+      image: ghcr.io/lobstertrap/openshell/ci:latest
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -753,7 +753,7 @@ jobs:
             ### Quick install
 
             ```
-            curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | OPENSHELL_VERSION=dev sh
+            curl -LsSf https://raw.githubusercontent.com/lobstertrap/openshell/main/install.sh | OPENSHELL_VERSION=dev sh
             ```
 
           files: |

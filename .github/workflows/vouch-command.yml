@@ -15,7 +15,7 @@ permissions:
 jobs:
   process-vouch:
     if: >-
-      github.repository_owner == 'NVIDIA' &&
+      github.repository_owner == 'LobsterTrap' &&
       github.event.comment.body == '/vouch'
     runs-on: ubuntu-latest
     steps:
@@ -182,7 +182,7 @@ jobs:
               '',
               'You can now submit pull requests to OpenShell. Welcome aboard.',
               '',
-              'Please read [CONTRIBUTING.md](https://github.com/NVIDIA/OpenShell/blob/main/CONTRIBUTING.md) before submitting.',
+              'Please read [CONTRIBUTING.md](https://github.com/lobstertrap/openshell/blob/main/CONTRIBUTING.md) before submitting.',
             ].join('\n'));
 
             console.log(`Vouched ${discussionAuthor} (approved by ${commenter}).`);

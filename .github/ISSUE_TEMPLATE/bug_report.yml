@@ -7,7 +7,7 @@ body:
       value: |
         ## Agent-First Troubleshooting
 
-        OpenShell is an agent-first project. Before filing this bug, point your coding agent at the repo and have it investigate using the available skills (`debug-openshell-cluster`, `debug-inference`, `openshell-cli`, etc.). See [CONTRIBUTING.md](https://github.com/NVIDIA/OpenShell/blob/main/CONTRIBUTING.md) for the full skills table.
+        OpenShell is an agent-first project. Before filing this bug, point your coding agent at the repo and have it investigate using the available skills (`debug-openshell-cluster`, `debug-inference`, `openshell-cli`, etc.). See [CONTRIBUTING.md](https://github.com/lobstertrap/openshell/blob/main/CONTRIBUTING.md) for the full skills table.
 
   - type: textarea
     id: agent-diagnostic

@@ -35,7 +35,7 @@ jobs:
     runs-on: build-amd64
     timeout-minutes: 5
     container:
-      image: ghcr.io/nvidia/openshell/ci:latest
+      image: ghcr.io/lobstertrap/openshell/ci:latest
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -66,7 +66,7 @@ jobs:
     runs-on: build-amd64
     timeout-minutes: 10
     container:
-      image: ghcr.io/nvidia/openshell/ci:latest
+      image: ghcr.io/lobstertrap/openshell/ci:latest
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -133,7 +133,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     container:
-      image: ghcr.io/nvidia/openshell/ci:latest
+      image: ghcr.io/lobstertrap/openshell/ci:latest
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -201,7 +201,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     container:
-      image: ghcr.io/nvidia/openshell/ci:latest
+      image: ghcr.io/lobstertrap/openshell/ci:latest
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -318,7 +318,7 @@ jobs:
     runs-on: build-amd64
     timeout-minutes: 60
     container:
-      image: ghcr.io/nvidia/openshell/ci:latest
+      image: ghcr.io/lobstertrap/openshell/ci:latest
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -438,7 +438,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     container:
-      image: ghcr.io/nvidia/openshell/ci:latest
+      image: ghcr.io/lobstertrap/openshell/ci:latest
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -555,7 +555,7 @@ jobs:
     runs-on: build-amd64
     timeout-minutes: 60
     container:
-      image: ghcr.io/nvidia/openshell/ci:latest
+      image: ghcr.io/lobstertrap/openshell/ci:latest
       credentials:
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
@@ -789,7 +789,7 @@ jobs:
             ### Quick install
 
             ```
-            curl -fsSL https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install-vm.sh | sh
+            curl -fsSL https://raw.githubusercontent.com/lobstertrap/openshell/main/install-vm.sh | sh
             ```
 
             Auto-detects your platform, verifies checksums, and codesigns on macOS.

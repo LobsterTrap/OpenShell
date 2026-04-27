@@ -163,7 +163,7 @@ openshell doctor exec -- kubectl -n kube-system logs -l job-name=helm-install-op
 Common issues:
 
 - **Replicas 0/0**: The StatefulSet has been scaled to zero — no pods are running. This can happen after a failed deploy, manual scale-down, or Helm values misconfiguration. Fix: `openshell doctor exec -- kubectl -n openshell scale statefulset openshell --replicas=1`
-- **ImagePullBackOff**: The component image failed to pull. In `internal` mode, verify internal registry readiness and pushed image tags (Step 5). In `external` mode, check `/etc/rancher/k3s/registries.yaml` credentials/endpoints and DNS (Step 8). Default external registry is `ghcr.io/nvidia/openshell/` (public, no auth required). If using a private registry, ensure `--registry-username` and `--registry-token` (or `OPENSHELL_REGISTRY_USERNAME`/`OPENSHELL_REGISTRY_TOKEN`) were provided during deploy.
+- **ImagePullBackOff**: The component image failed to pull. In `internal` mode, verify internal registry readiness and pushed image tags (Step 5). In `external` mode, check `/etc/rancher/k3s/registries.yaml` credentials/endpoints and DNS (Step 8). Default external registry is `ghcr.io/lobstertrap/openshell/` (public, no auth required). If using a private registry, ensure `--registry-username` and `--registry-token` (or `OPENSHELL_REGISTRY_USERNAME`/`OPENSHELL_REGISTRY_TOKEN`) were provided during deploy.
 - **CrashLoopBackOff**: The server is crashing. Check pod logs for the actual error.
 - **Pending**: Insufficient resources or scheduling constraints.
 
@@ -208,7 +208,7 @@ openshell doctor exec -- ctr -a /run/k3s/containerd/containerd.sock images ls | 
 openshell doctor exec -- cat /etc/rancher/k3s/registries.yaml
 
 # Test pulling an image manually from inside the cluster
-openshell doctor exec -- crictl pull ghcr.io/nvidia/openshell/gateway:latest
+openshell doctor exec -- crictl pull ghcr.io/lobstertrap/openshell/gateway:latest
 ```
 
 If `registries.yaml` is missing or has wrong values, verify env wiring (`OPENSHELL_REGISTRY_HOST`, `OPENSHELL_REGISTRY_INSECURE`, username/password for authenticated registries).

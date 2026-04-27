@@ -6,7 +6,7 @@
 replicaCount: 1
 
 image:
-  repository: ghcr.io/nvidia/openshell/gateway
+  repository: ghcr.io/lobstertrap/openshell/gateway
   pullPolicy: Always
   tag: "latest"
 
