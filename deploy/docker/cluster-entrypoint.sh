@@ -282,6 +282,18 @@ REGEOF
 REGEOF
 	fi
 
+	# Default container registry when docker.io is unavailable.
+	if [ -n "${OPENSHELL_CONTAINER_REGISTRY:-}" ]; then
+		echo "Adding default container registry: ${OPENSHELL_CONTAINER_REGISTRY}"
+		cat >>"$REGISTRIES_YAML" <<REGEOF
+  "docker.io":
+    endpoint:
+      - "${OPENSHELL_CONTAINER_REGISTRY}"
+REGEOF
+	else
+		echo "Info: OPENSHELL_CONTAINER_REGISTRY not set; unqualified image pulls will use docker.io directly"
+	fi
+
 	if [ -n "${REGISTRY_USERNAME:-}" ] && [ -n "${REGISTRY_PASSWORD:-}" ]; then
 		cat >>"$REGISTRIES_YAML" <<REGEOF
 
@@ -318,7 +330,22 @@ REGEOF
 		fi
 	fi
 else
-	echo "Warning: REGISTRY_HOST not set; skipping registry config"
+	echo "Warning: REGISTRY_HOST not set; skipping OpenShell component registry mirror config"
+fi
+
+# Default container registry — even without a component registry
+# configured, k3s still needs to pull system images (e.g.
+# rancher/mirrored-pause) and will fail if docker.io is unreachable.
+if [ -n "${OPENSHELL_CONTAINER_REGISTRY:-}" ] && [ ! -f "$REGISTRIES_YAML" ]; then
+	echo "Configuring default container registry: ${OPENSHELL_CONTAINER_REGISTRY}"
+	cat >"$REGISTRIES_YAML" <<REGEOF
+mirrors:
+  "docker.io":
+    endpoint:
+      - "${OPENSHELL_CONTAINER_REGISTRY}"
+REGEOF
+elif [ ! -f "$REGISTRIES_YAML" ]; then
+	echo "Info: OPENSHELL_CONTAINER_REGISTRY not set; unqualified image pulls will use docker.io directly"
 fi
 
 # Copy bundled Helm chart tarballs to the k3s static charts directory.

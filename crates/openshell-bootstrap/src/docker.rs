@@ -842,6 +842,10 @@ pub async fn ensure_container(
     if let Some(endpoint) = registry_endpoint {
         env_vars.push(format!("REGISTRY_ENDPOINT={endpoint}"));
     }
+    // Default container registry when docker.io is unavailable.
+    if let Some(registry) = env_non_empty("OPENSHELL_CONTAINER_REGISTRY") {
+        env_vars.push(format!("OPENSHELL_CONTAINER_REGISTRY={registry}"));
+    }
     if let Some(password) = effective_password {
         // Default to __token__ when only a password/token is provided.
         let username = effective_username.unwrap_or_else(|| "__token__".to_string());

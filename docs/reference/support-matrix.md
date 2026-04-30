@@ -54,6 +54,7 @@ To override the default image references, set the following environment variable
 | ------------------------------ | --------------------------------------------------- |
 | `OPENSHELL_CLUSTER_IMAGE`      | Override the cluster image reference.               |
 | `OPENSHELL_COMMUNITY_REGISTRY` | Override the registry for community sandbox images. |
+| `OPENSHELL_CONTAINER_REGISTRY` | Default container registry for image pulls. When set, images without an explicit registry are pulled from this endpoint instead of `docker.io`. |
 
 ## Kernel Requirements
 
